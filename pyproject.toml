@@ -12,6 +12,9 @@ license = { file = "LICENSE" }
 dependencies = [
     "PySide6>=6.7",
     "yfinance>=0.2.40",
+    "sqlcipher3>=0.5.4",
+    "pyobjc-framework-LocalAuthentication>=10.3; sys_platform == 'darwin'",
+    "pyobjc-framework-Security>=10.3; sys_platform == 'darwin'",
 ]
 
 [project.optional-dependencies]
@@ -46,5 +49,5 @@ strict = true
 mypy_path = "src"
 
 [[tool.mypy.overrides]]
-module = ["yfinance"]
+module = ["yfinance", "sqlcipher3", "Security", "LocalAuthentication"]
 ignore_missing_imports = true

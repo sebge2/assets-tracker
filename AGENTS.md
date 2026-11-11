@@ -8,7 +8,7 @@ Assets Tracker — application desktop locale de suivi de portefeuille. Les donn
 |---|---|---|
 | UI | PySide6 (Qt) | `src/assets_tracker/ui/` |
 | Moteur financier | Python pur | `src/assets_tracker/domain/` |
-| Stockage | SQLite (`sqlite3` stdlib) | `src/assets_tracker/db/` |
+| Stockage | SQLCipher + Trousseau macOS / Touch ID | `src/assets_tracker/db/` |
 | Cours | yfinance | `src/assets_tracker/market/` |
 | Packaging | PyInstaller | `packaging/build.sh` |
 
@@ -28,7 +28,7 @@ Python ≥ 3.11. Gestion des dépendances dans `pyproject.toml` (extra `dev`).
 - **Projections** : capitalisation à intérêts composés annuels, à partir de la valeur actuelle et du taux de rendement annuel (par défaut la performance annuelle historique, modifiable).
 - **Simulations** : projection avec versement mensuel régulier (montant, durée et taux paramétrables), comparable au scénario sans versement.
 - **Interface** : thème sombre, écrans Portefeuille, Transactions, Comptes cash, Performance et Simulation (voir « Design system »).
-- **Persistance** : base SQLite locale, pleinement utilisable hors connexion.
+- **Persistance** : base SQLCipher locale chiffrée, pleinement utilisable hors connexion.
 
 Les projections sont des estimations indicatives, jamais des garanties : l'UI doit l'afficher.
 
@@ -89,6 +89,8 @@ mypy src                         # typage strict
   - Gain et perte portent toujours un signe et une flèche (▲ / ▼), jamais la couleur seule. `variation_color()` donne la couleur sémantique.
   - Un prix en cache (cours non actualisé) s'affiche avec un badge « Cache » couleur alerte.
   - États focus avec anneau accent de 2 px. Les mocks utilisent des champs et boutons de 44 px ; `theme.py` est à 36 px pour l'instant (à aligner).
+- **Base chiffrée** : la base est ouverte uniquement via `db/connection.py` avec SQLCipher ; ne jamais employer `sqlite3` pour une base de portefeuille. Une clé aléatoire de 256 bits est créée au premier lancement et stockée dans le Trousseau macOS local, avec `kSecAttrAccessibleWhenUnlockedThisDeviceOnly`. `db/keychain.py` demande Touch ID avec `LocalAuthentication` avant chaque lecture de la clé. Cette séparation évite `errSecMissingEntitlement` (`-34018`) dans les builds PyInstaller locaux ; Touch ID ne fournit jamais la clé elle-même.
+- **Clé et récupération** : aucune clé, copie du Trousseau ou base en clair ne doit être journalisée, exportée ou versionnée. Les exports/sauvegardes chiffrés et la migration vers un autre Mac doivent être des flux explicites ; une base SQLite non chiffrée est refusée, jamais chiffrée/migrée silencieusement.
 - **Schéma DB** dans `db/schema.sql`. Toute évolution = migration versionnée (`PRAGMA user_version`), jamais de modification destructive silencieuse.
 - La base utilisateur vit dans le dossier AppData de Qt (`db/connection.py`), pas dans le repo (`*.db` est ignoré).
 - PyInstaller : tout fichier de données lu à l'exécution (ex. `schema.sql`) doit être ajouté via `--add-data` dans `packaging/build.sh` et lu avec `importlib.resources`.
