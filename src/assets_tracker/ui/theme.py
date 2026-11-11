@@ -113,6 +113,7 @@ QCheckBox::indicator:checked {{ background: {ACCENT}; border-color: {ACCENT}; }}
 QDialog {{ background: {OVERLAY}; }}
 QTabWidget::pane {{ border: none; border-top: 1px solid {BORDER}; }}
 QTabBar::tab:hover {{ color: {TEXT}; }}
+QScrollArea {{ border: none; }}
 QTableWidget {{ outline: 0; }}
 QTableWidget::item {{ padding: 0 12px; }}
 QTableWidget::item:hover {{ background: {HOVER_ROW}; }}

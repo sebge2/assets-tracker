@@ -9,9 +9,7 @@ from datetime import date
 from decimal import Decimal
 
 from PySide6.QtCore import QSize, Qt, Signal
-from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
-    QAbstractItemView,
     QButtonGroup,
     QFrame,
     QHBoxLayout,
@@ -21,7 +19,6 @@ from PySide6.QtWidgets import (
     QPushButton,
     QStackedWidget,
     QTableWidget,
-    QTableWidgetItem,
     QTabWidget,
     QToolButton,
     QVBoxLayout,
@@ -62,6 +59,11 @@ from assets_tracker.ui.formatting import (
     signed_money,
 )
 from assets_tracker.ui.rate_chart import RateChart
+from assets_tracker.ui.widgets import RIGHT as _RIGHT
+from assets_tracker.ui.widgets import Card as _Card
+from assets_tracker.ui.widgets import fit_height as _fit_height
+from assets_tracker.ui.widgets import prepare_table as _prepare_table
+from assets_tracker.ui.widgets import table_cell as _cell
 
 _ZERO = Decimal(0)
 
@@ -91,25 +93,6 @@ def snapshot_of(repository: CashRepository, account: CashAccount, today: date) -
     )
 
 
-def _cell(
-    text: str,
-    *,
-    color: str = theme.TEXT,
-    mono: bool = False,
-    align: Qt.AlignmentFlag = Qt.AlignmentFlag.AlignLeft,
-) -> QTableWidgetItem:
-    item = QTableWidgetItem(text)
-    item.setForeground(QColor(color))
-    item.setTextAlignment(align | Qt.AlignmentFlag.AlignVCenter)
-    item.setFlags(Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable)
-    if mono:
-        item.setFont(theme.mono_font(13))
-    return item
-
-
-_RIGHT = Qt.AlignmentFlag.AlignRight
-
-
 def _rich_label(html: str, align: Qt.AlignmentFlag = Qt.AlignmentFlag.AlignLeft) -> QLabel:
     label = QLabel(html)
     label.setTextFormat(Qt.TextFormat.RichText)
@@ -117,54 +100,6 @@ def _rich_label(html: str, align: Qt.AlignmentFlag = Qt.AlignmentFlag.AlignLeft)
     label.setContentsMargins(12, 0, 12, 0)
     label.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
     return label
-
-
-def _prepare_table(table: QTableWidget, headers: list[str], *, row_height: int) -> None:
-    table.setColumnCount(len(headers))
-    table.setHorizontalHeaderLabels(headers)
-    table.verticalHeader().setVisible(False)
-    table.verticalHeader().setDefaultSectionSize(row_height)
-    table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
-    table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
-    table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
-    table.setShowGrid(False)
-    table.setAlternatingRowColors(True)
-    table.horizontalHeader().setHighlightSections(False)
-    table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
-    table.horizontalHeader().setStretchLastSection(False)
-    table.horizontalHeader().setDefaultAlignment(
-        Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter
-    )
-
-
-def _fit_height(table: QTableWidget) -> None:
-    """Donne au tableau la hauteur de ses lignes pour qu'il défile avec la page."""
-    rows = table.rowCount()
-    height = table.horizontalHeader().height() + table.verticalHeader().defaultSectionSize() * rows
-    table.setFixedHeight(max(height + 4, 120))
-
-
-class _Card(QFrame):
-    def __init__(self, caption: str) -> None:
-        super().__init__()
-        self.setProperty("role", "card")
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(20, 18, 20, 18)
-        layout.setSpacing(6)
-        self._caption = QLabel(caption.upper())
-        self._caption.setProperty("role", "caption")
-        self._value = QLabel()
-        self._value.setFont(theme.mono_font(22))
-        self._sub = QLabel()
-        self._sub.setProperty("role", "muted")
-        self._sub.setWordWrap(True)
-        for widget in (self._caption, self._value, self._sub):
-            layout.addWidget(widget)
-
-    def set(self, value: str, sub: str, color: str = theme.TEXT) -> None:
-        self._value.setText(value)
-        self._value.setStyleSheet(f"color: {color};")
-        self._sub.setText(sub)
 
 
 # --- Liste ------------------------------------------------------------------
@@ -377,6 +312,7 @@ class AccountDetailView(QWidget):
     backRequested = Signal()
     editRequested = Signal(int)
     movementRequested = Signal(int)
+    movementDeleteRequested = Signal(int)
 
     def __init__(self) -> None:
         super().__init__()
@@ -456,9 +392,11 @@ class AccountDetailView(QWidget):
         self._movements = QTableWidget()
         self._movements.setAccessibleName("Entrées et sorties du compte")
         _prepare_table(
-            self._movements, ["Date", "Opération", "Montant", "Solde après"], row_height=48
+            self._movements, ["Date", "Opération", "Montant", "Solde après", ""], row_height=48
         )
         self._movements.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
+        self._movements.horizontalHeader().setSectionResizeMode(4, QHeaderView.ResizeMode.Fixed)
+        self._movements.horizontalHeader().resizeSection(4, 48)
         self._movements_empty = QLabel("Aucun mouvement pour l'instant.")
         self._movements_empty.setProperty("role", "muted")
         self._movements_empty.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -625,6 +563,24 @@ class AccountDetailView(QWidget):
                     align=_RIGHT,
                 ),
             )
+            if move.kind in (MovementKind.DEPOSIT, MovementKind.WITHDRAWAL):
+                assert move.id is not None
+                delete = QToolButton()
+                delete.setProperty("role", "icon")
+                delete.setIcon(icons.icon("delete", color=theme.LOSS))
+                delete.setIconSize(QSize(18, 18))
+                delete.setToolTip("Supprimer ce mouvement")
+                delete.setAccessibleName(
+                    f"Supprimer {_MOVEMENT_LABELS[move.kind].lower()} du "
+                    f"{move.movement_date.isoformat()}"
+                )
+                delete.setCursor(Qt.CursorShape.PointingHandCursor)
+                delete.clicked.connect(
+                    lambda _=False, movement_id=move.id: self.movementDeleteRequested.emit(
+                        movement_id
+                    )
+                )
+                self._movements.setCellWidget(row, 4, delete)
         self._movements.setVisible(bool(shown))
         self._movements_empty.setVisible(not shown)
 
@@ -716,6 +672,7 @@ class CashPage(QWidget):
         self._detail.backRequested.connect(self.show_list)
         self._detail.editRequested.connect(self._edit_account)
         self._detail.movementRequested.connect(self._new_movement)
+        self._detail.movementDeleteRequested.connect(self._delete_movement)
         self.refresh()
 
     # -- navigation --
@@ -819,4 +776,21 @@ class CashPage(QWidget):
             self._repository.add_movement(account_id, form.kind, form.movement_date, form.amount)
         except ValueError as error:
             QMessageBox.warning(self, "Mouvement refusé", str(error))
+        self.refresh()
+
+    def _delete_movement(self, movement_id: int) -> None:
+        if self._current_id is None:
+            return
+        answer = QMessageBox.question(
+            self,
+            "Supprimer le mouvement",
+            "Supprimer définitivement ce mouvement ? Cette action est irréversible.",
+        )
+        if answer != QMessageBox.StandardButton.Yes:
+            return
+        try:
+            self._repository.delete_movement(self._current_id, movement_id)
+        except ValueError as error:
+            QMessageBox.warning(self, "Suppression impossible", str(error))
+            return
         self.refresh()

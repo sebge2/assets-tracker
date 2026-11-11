@@ -15,8 +15,14 @@ _PATHS = {
     ),
     "cash": '<rect x="2" y="6" width="20" height="13" rx="2"/><path d="M2 10h20M6 15h4"/>',
     "edit": '<path d="M4 20h4L19 9l-4-4L4 16zM13.5 6.5l4 4"/>',
+    "delete": '<path d="M4 7h16M10 11v5M14 11v5M9 7l1-3h4l1 3M6 7l1 13h10l1-13"/>',
     "back": '<path d="M19 12H5M11 6l-6 6 6 6"/>',
     "add": '<path d="M12 5v14M5 12h14"/>',
+    "simulation": (
+        '<path d="M3 6h11M18 6h3M3 12h5M12 12h9M3 18h13M20 18h1"/>'
+        '<circle cx="16" cy="6" r="2"/><circle cx="10" cy="12" r="2"/>'
+        '<circle cx="18" cy="18" r="2"/>'
+    ),
 }
 
 _SCALE = 2  # rendu en 2x pour les écrans Retina

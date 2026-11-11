@@ -8,7 +8,7 @@ from typing import Any
 
 import pytest
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QToolButton
+from PySide6.QtWidgets import QMessageBox, QToolButton
 from pytestqt.qtbot import QtBot
 
 from assets_tracker.db.cash_repository import CashRepository
@@ -197,6 +197,35 @@ def test_new_movement_is_recorded_and_withdrawal_beyond_balance_is_refused(
 
     assert warnings and "Solde insuffisant" in warnings[0]
     assert page._detail._movements.rowCount() == 2
+
+
+def test_movement_can_be_deleted_from_the_detail(
+    qtbot: QtBot, page: CashPage, repo: CashRepository, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    click_cell(qtbot, page, 0, 1)
+    account_id = page._current_id
+    assert account_id is not None
+    movement = repo.movements(account_id)[0]
+    assert movement.id is not None
+    monkeypatch.setattr(
+        "assets_tracker.ui.cash_page.QMessageBox.question",
+        lambda *args: QMessageBox.StandardButton.Yes,
+    )
+
+    page._detail.movementDeleteRequested.emit(movement.id)
+
+    assert repo.movements(account_id) == []
+    assert page._detail._movements.rowCount() == 0
+
+
+def test_movement_dialog_returns_a_movement_kind_enum(qtbot: QtBot) -> None:
+    dialog = MovementDialog(None, today=TODAY, balance_text="0,00 €")
+    qtbot.addWidget(dialog)
+    dialog._amount.setText("150")
+
+    form = dialog.form()
+
+    assert form.kind is MovementKind.DEPOSIT
 
 
 def test_account_dialog_builds_a_validated_form(qtbot: QtBot) -> None:

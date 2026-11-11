@@ -387,7 +387,9 @@ class MovementDialog(QDialog):
         amount = parse_decimal(self._amount.text(), "Montant")
         if amount <= 0:
             raise ValueError("Le montant doit être strictement positif.")
-        return MovementForm(self._kind.currentData(), _to_date(self._date), amount)
+        # MovementKind hérite de str : Qt restitue donc la donnée utilisateur sous
+        # forme de chaîne. Recréer l'enum préserve le contrat de MovementForm.
+        return MovementForm(MovementKind(self._kind.currentData()), _to_date(self._date), amount)
 
     def _try_accept(self) -> None:
         try:

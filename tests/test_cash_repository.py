@@ -175,6 +175,30 @@ def test_withdrawal_beyond_balance_is_refused_and_not_stored(repo: CashRepositor
     assert len(repo.movements(account.id)) == 1
 
 
+def test_deleting_a_movement_removes_it_from_the_history(repo: CashRepository) -> None:
+    account = repo.create_account(new_account(), D("1.00"))
+    assert account.id is not None
+    movement = repo.add_movement(account.id, MovementKind.DEPOSIT, date(2026, 1, 1), D("100"))
+    assert movement.id is not None
+
+    repo.delete_movement(account.id, movement.id)
+
+    assert repo.movements(account.id) == []
+
+
+def test_deleting_a_deposit_that_funds_a_withdrawal_is_refused(repo: CashRepository) -> None:
+    account = repo.create_account(new_account(), D("1.00"))
+    assert account.id is not None
+    deposit = repo.add_movement(account.id, MovementKind.DEPOSIT, date(2026, 1, 1), D("100"))
+    assert deposit.id is not None
+    repo.add_movement(account.id, MovementKind.WITHDRAWAL, date(2026, 1, 2), D("50"))
+
+    with pytest.raises(ValueError, match="retrait ultérieur"):
+        repo.delete_movement(account.id, deposit.id)
+
+    assert len(repo.movements(account.id)) == 2
+
+
 def test_deleting_an_account_removes_its_history(repo: CashRepository, conn: Any) -> None:
     account = repo.create_account(new_account(), D("1.00"), bonus=(D("1.50"), 12))
     assert account.id is not None

@@ -19,6 +19,7 @@ from PySide6.QtWidgets import (
 from assets_tracker.db.cash_repository import CashRepository
 from assets_tracker.ui import icons, theme
 from assets_tracker.ui.cash_page import CashPage
+from assets_tracker.ui.projection_page import ProjectionPage
 
 
 class MainWindow(QMainWindow):
@@ -33,7 +34,9 @@ class MainWindow(QMainWindow):
         self._portfolio = self._build_portfolio_page()
         self.cash_page = CashPage(CashRepository(database))
         self._stack.addWidget(self._portfolio)
+        self.projection_page = ProjectionPage()
         self._stack.addWidget(self.cash_page)
+        self._stack.addWidget(self.projection_page)
 
         root = QWidget()
         root.setObjectName("root")
@@ -69,7 +72,11 @@ class MainWindow(QMainWindow):
         group.setExclusive(True)
         self._nav_buttons: list[QPushButton] = []
         for index, (label, icon_name) in enumerate(
-            (("Portefeuille", "dashboard"), ("Comptes cash", "cash"))
+            (
+                ("Portefeuille", "dashboard"),
+                ("Comptes cash", "cash"),
+                ("Simulation", "simulation"),
+            )
         ):
             button = QPushButton(label)
             button.setProperty("nav", True)

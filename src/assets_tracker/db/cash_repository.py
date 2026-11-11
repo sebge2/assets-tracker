@@ -14,6 +14,7 @@ from assets_tracker.domain.cash import (
     InterestFrequency,
     MovementKind,
     check_movement_allowed,
+    statement,
 )
 
 
@@ -191,6 +192,23 @@ class CashRepository:
                 (account_id, kind.value, movement_date.isoformat(), str(amount)),
             )
         return CashMovement(int(cursor.lastrowid), account_id, kind, movement_date, amount)
+
+    def delete_movement(self, account_id: int, movement_id: int) -> None:
+        """Supprime un mouvement sans permettre un historique de solde négatif."""
+        movements = self.movements(account_id)
+        target = next((move for move in movements if move.id == movement_id), None)
+        if target is None:
+            raise ValueError("Le mouvement à supprimer est introuvable.")
+        remaining = [move for move in movements if move.id != movement_id]
+        if any(line.balance_after < 0 for line in statement(remaining)):
+            raise ValueError(
+                "Suppression impossible : un retrait ultérieur rendrait le solde négatif."
+            )
+        with self._conn:
+            self._conn.execute(
+                "DELETE FROM cash_movements WHERE id = ? AND account_id = ?",
+                (movement_id, account_id),
+            )
 
 
 def _account(row: Any) -> CashAccount:
