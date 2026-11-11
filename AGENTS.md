@@ -17,7 +17,8 @@ Python ≥ 3.11. Gestion des dépendances dans `pyproject.toml` (extra `dev`).
 ## Périmètre V1
 
 - **Instruments** : création, modification et suivi, par type : `STOCK` (action), `BOND` (obligation), `FUND` (fonds), `CRYPTO`, `CASH`, `TERM_NOTE` (bon de caisse).
-- **Transactions** : achats et ventes, avec quantité, prix et frais.
+- **Transactions** : les opérations et les champs saisis dépendent du type d'instrument (voir « Opérations par instrument »). Saisie via un assistant (wizard) en 4 étapes : instrument, opération, détails, récapitulatif.
+- **Comptes cash** : gestion de comptes (nom, banque, IBAN, devise) avec taux d'intérêt, historique des taux, prime de fidélité et fréquence de versement (voir « Comptes cash »). Tout dépôt/retrait est rattaché à un compte.
 - **Valorisation** : positions, plus-values réalisées et latentes.
 - **Obligations** : nominal, taux de coupon, fréquence de coupon et échéance.
 - **Devises** : suivi multidevise, valorisation consolidée en EUR.
@@ -26,13 +27,14 @@ Python ≥ 3.11. Gestion des dépendances dans `pyproject.toml` (extra `dev`).
 - **Performance annuelle** : calculée à partir de l'historique mensuel, en neutralisant les apports/retraits (rendement pondéré par le temps).
 - **Projections** : capitalisation à intérêts composés annuels, à partir de la valeur actuelle et du taux de rendement annuel (par défaut la performance annuelle historique, modifiable).
 - **Simulations** : projection avec versement mensuel régulier (montant, durée et taux paramétrables), comparable au scénario sans versement.
+- **Interface** : thème sombre, écrans Portefeuille, Transactions, Comptes cash, Performance et Simulation (voir « Design system »).
 - **Persistance** : base SQLite locale, pleinement utilisable hors connexion.
 
 Les projections sont des estimations indicatives, jamais des garanties : l'UI doit l'afficher.
 
 Hors périmètre V1 : synchronisation cloud, multi-utilisateur. L'architecture doit pouvoir évoluer vers un suivi patrimonial plus large sans refonte.
 
-État actuel : le schéma et les modèles ne couvrent pas encore le type d'instrument, les champs obligataires (nominal, coupon, fréquence, échéance), ni les taux de change, ni l'historique mensuel, la performance et les projections.
+État actuel : le schéma et les modèles ne couvrent pas encore le type d'instrument, les champs obligataires (nominal, coupon, fréquence, échéance), ni les taux de change, ni l'historique mensuel, la performance et les projections. Ils ne couvrent pas non plus les opérations autres que `BUY`/`SELL` (le schéma n'accepte que ces deux types, avec quantité et prix), ni les comptes cash. Seul le thème (`ui/theme.py`) est implémenté côté UI ; la fenêtre principale est toujours un simple tableau.
 
 ## Commandes
 
@@ -60,10 +62,33 @@ mypy src                         # typage strict
   - `CASH` : pas de cours, valeur = montant dans sa devise (converti en EUR).
   Les champs propres à un type ne sont obligatoires que pour ce type (validation dans `domain/`).
 - **Obligations** : le cours est exprimé en % du nominal ; la valeur de marché = cours % × nominal × quantité. Les paramètres obligataires (nominal, coupon, fréquence, échéance) sont portés par l'instrument.
+- **Opérations par instrument** : le type d'opération et les champs saisis dépendent de l'instrument ; la validation vit dans `domain/`. Le libellé UI peut différer du code. Le schéma actuel (`BUY`/`SELL`) devra être étendu par migration.
+
+  | Instrument | Entrée | Sortie | Champs spécifiques |
+  |---|---|---|---|
+  | `STOCK` | Achat | Vente | symbole, devise, quantité, prix, frais |
+  | `BOND` | Achat | Vente, Remboursement | titres, nominal, prix en % du nominal, coupon, échéance, coupon couru |
+  | `FUND` | Souscription | Rachat | parts, valeur liquidative, frais d'entrée ou de sortie en % |
+  | `CRYPTO` | Achat | Vente | jeton, plateforme, quantité (8 décimales), frais en € |
+  | `CASH` | Dépôt | Retrait | compte, montant (ni quantité ni prix) |
+  | `TERM_NOTE` | Souscription | Remboursement | émetteur, montant, taux, échéance, mode de versement des intérêts |
+
+  À la sortie, on choisit un actif déjà détenu : la quantité est plafonnée à la position, le PRU reste inchangé et la plus-value réalisée est calculée. Un remboursement obligataire se fait au nominal, sans prix : le capital et le dernier coupon suffisent. Le coupon couru payé à l'achat est un coût ; perçu à la vente, c'est un revenu hors plus-value.
+- **Comptes cash** : entité `cash_accounts` (nom, banque, IBAN, devise). L'IBAN reste en local, affiché masqué dans l'UI (`FR76 •••• •••• 0143`). Une transaction `CASH` référence toujours un compte, dont elle reprend la devise ; un retrait ne peut pas dépasser le solde.
+  - **Taux et historique** : un compte a un taux de base et une prime de fidélité, tous deux datés (date d'effet). Un changement de taux ajoute une ligne, jamais de modification de l'ancienne : l'historique des taux d'un compte est conservé. Taux effectif = taux de base + prime une fois la condition remplie.
+  - **Prime de fidélité** : taux additionnel conditionné par une durée de détention en mois. Quand la condition est atteinte, la prime s'ajoute à l'historique à cette date.
+  - **Versement des intérêts** : fréquence `ANNUAL` ou `MONTHLY`. Mensuel : versé le 1er de chaque mois, sans autre saisie. Annuel : mois et jour du versement (ex. 31 décembre).
+  - **Intérêts versés** : conservés par compte avec leur date. Le calcul (taux × solde au prorata) vit dans `domain/` (pur, `Decimal`) et a des cas chiffrés ; les intérêts estimés dans l'UI sont des estimations, à l'image des projections. À trancher : intérêts versés calculés ou saisis comme transactions cash.
 - **Hors ligne** : au démarrage et à chaque rafraîchissement, un échec réseau conserve le dernier prix connu (affiché avec sa date). Le rafraîchissement périodique s'exécute hors du thread UI.
 - **Historique mensuel** : table dédiée (`monthly_snapshots`), un enregistrement par mois et par position plus un total, en EUR. Idempotent (le snapshot d'un mois se met à jour par upsert) et rattrapé au démarrage si des mois ont été manqués ; un mois passé est figé avec les derniers cours connus. Les snapshots ne sont jamais recalculés depuis les cours actuels.
 - **Performance et projections** : logique pure dans `domain/` (`performance.py`, `projection.py`), en `Decimal`. Performance annuelle = rendement pondéré par le temps sur les snapshots mensuels, flux de transactions exclus. Projection : `V(n+1) = V(n) × (1 + r) + 12 × versement_mensuel` avec intérêts composés annuels ; le détail mois par mois doit rester testable avec des cas chiffrés.
 - **UI non bloquante** : appels réseau hors du thread Qt (`QThread`/`QThreadPool`).
+- **Design system** : thème sombre dans `ui/theme.py` (tokens + feuille de style Qt), appliqué au démarrage par `apply_theme(app)`. Aucune couleur en dur dans les widgets : importer les tokens. Les mocks de référence sont dans le canvas « Assets Tracker Design System » (fondations, Portefeuille, Transactions et wizard, Comptes cash, Performance, Simulation).
+  - Fond `#0B0D12`, surfaces `#12151C` / `#181C26` / `#202533`, accent `#7C8CFF`, gain `#3DDC97`, perte `#FF7A8A`, alerte `#F5B84B`.
+  - Polices : Space Grotesk (titres), Inter (texte), JetBrains Mono tabulaire pour tous les chiffres. Ces polices ne sont pas embarquées : Qt retombe sur une police système.
+  - Gain et perte portent toujours un signe et une flèche (▲ / ▼), jamais la couleur seule. `variation_color()` donne la couleur sémantique.
+  - Un prix en cache (cours non actualisé) s'affiche avec un badge « Cache » couleur alerte.
+  - États focus avec anneau accent de 2 px. Les mocks utilisent des champs et boutons de 44 px ; `theme.py` est à 36 px pour l'instant (à aligner).
 - **Schéma DB** dans `db/schema.sql`. Toute évolution = migration versionnée (`PRAGMA user_version`), jamais de modification destructive silencieuse.
 - La base utilisateur vit dans le dossier AppData de Qt (`db/connection.py`), pas dans le repo (`*.db` est ignoré).
 - PyInstaller : tout fichier de données lu à l'exécution (ex. `schema.sql`) doit être ajouté via `--add-data` dans `packaging/build.sh` et lu avec `importlib.resources`.
