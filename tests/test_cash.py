@@ -24,6 +24,7 @@ from assets_tracker.domain.cash import (
     effective_rate_steps,
     estimated_annual_interest,
     format_iban,
+    interest_received_in_year,
     is_valid_iban,
     mask_iban,
     normalize_iban,
@@ -282,3 +283,20 @@ def test_weighted_average_rate_uses_balances_as_weights() -> None:
     ]
     assert weighted_average_rate(positions) == D("2.83")
     assert weighted_average_rate([]) == D("0")
+
+
+def test_interest_received_in_year_sums_interest_and_bonus_of_that_year_only() -> None:
+    def move(kind: MovementKind, when: date, amount: str) -> CashMovement:
+        return CashMovement(None, 1, kind, when, D(amount))
+
+    movements = [
+        move(MovementKind.DEPOSIT, date(2026, 1, 1), "1000"),
+        move(MovementKind.INTEREST, date(2025, 12, 31), "9"),
+        move(MovementKind.INTEREST, date(2026, 1, 31), "2.50"),
+        move(MovementKind.INTEREST, date(2026, 11, 1), "2.55"),
+        move(MovementKind.LOYALTY_BONUS, date(2026, 11, 1), "1"),
+        move(MovementKind.INTEREST, date(2027, 1, 1), "5"),
+    ]
+
+    assert interest_received_in_year(movements, 2026) == D("6.05")
+    assert interest_received_in_year([], 2026) == D("0")

@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from datetime import date
 from typing import Any
 
 from PySide6.QtCore import QSize, Qt
@@ -34,7 +33,6 @@ class MainWindow(QMainWindow):
         self._stack = QStackedWidget()
         self._portfolio = self._build_portfolio_page()
         cash_repository = CashRepository(database)
-        cash_repository.credit_due_yields(date.today())
         self.cash_page = CashPage(cash_repository)
         self._stack.addWidget(self._portfolio)
         self.projection_page = ProjectionPage()

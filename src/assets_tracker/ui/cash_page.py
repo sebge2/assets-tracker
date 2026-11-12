@@ -9,6 +9,7 @@ from datetime import date
 from decimal import Decimal
 
 from PySide6.QtCore import QSize, Qt, Signal
+from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
     QButtonGroup,
     QFrame,
@@ -17,8 +18,10 @@ from PySide6.QtWidgets import (
     QLabel,
     QMessageBox,
     QPushButton,
+    QScrollArea,
     QStackedWidget,
     QTableWidget,
+    QTableWidgetItem,
     QTabWidget,
     QToolButton,
     QVBoxLayout,
@@ -32,7 +35,6 @@ from assets_tracker.domain.cash import (
     BonusEventKind,
     CashAccount,
     CashMovement,
-    InterestFrequency,
     MovementKind,
     StatementLine,
     add_months,
@@ -44,13 +46,14 @@ from assets_tracker.domain.cash import (
     check_movement_allowed,
     effective_rate_on,
     effective_rate_steps,
-    estimated_annual_interest,
+    interest_received_in_year,
     mask_iban,
     statement,
     weighted_average_rate,
 )
 from assets_tracker.ui import icons, theme
 from assets_tracker.ui.cash_dialogs import AccountDialog, AccountForm, MovementDialog, MovementForm
+from assets_tracker.ui.cash_evolution import EvolutionInput, EvolutionView
 from assets_tracker.ui.formatting import (
     frequency_label,
     money,
@@ -77,19 +80,27 @@ class AccountSnapshot:
     base_rate: Decimal
     bonus_rate: Decimal
     effective_rate: Decimal
-    annual_interest: Decimal
+    year: int
+    interest_year: Decimal  # intérêts et primes saisis sur l'année civile en cours
 
 
 def snapshot_of(repository: CashRepository, account: CashAccount, today: date) -> AccountSnapshot:
     assert account.id is not None
     changes = repository.base_rates(account.id)
     bonuses = repository.bonuses(account.id)
-    balance = balance_of(repository.movements(account.id))
+    movements = repository.movements(account.id)
+    balance = balance_of(movements)
     base = base_rate_on(changes, today)
     bonus = bonus_on(account.opened_on, bonuses, today)
     effective = effective_rate_on(account.opened_on, changes, bonuses, today)
     return AccountSnapshot(
-        account, balance, base, bonus, effective, estimated_annual_interest(balance, effective)
+        account,
+        balance,
+        base,
+        bonus,
+        effective,
+        today.year,
+        interest_received_in_year(movements, today.year),
     )
 
 
@@ -110,7 +121,7 @@ class AccountsView(QWidget):
     editRequested = Signal(int)
     newRequested = Signal()
 
-    _COLUMNS = ["Compte", "IBAN", "Taux effectif", "Versement", "Solde", "Intérêts / an", ""]
+    _COLUMNS = ["Compte", "IBAN", "Taux effectif", "Versement", "Solde", "Intérêts", ""]
 
     def __init__(self) -> None:
         super().__init__()
@@ -130,7 +141,7 @@ class AccountsView(QWidget):
         header.addWidget(add, 0, Qt.AlignmentFlag.AlignTop)
 
         self._total = _Card("Total cash")
-        self._interest = _Card("Intérêts annuels estimés")
+        self._interest = _Card("Intérêts perçus")
         self._average = _Card("Taux moyen pondéré")
         cards = QHBoxLayout()
         cards.setSpacing(16)
@@ -143,7 +154,7 @@ class AccountsView(QWidget):
         self._table.setWordWrap(False)
         columns = self._table.horizontalHeader()
         columns.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
-        for column, width in enumerate((170, 160, 215, 120, 110, 64), start=1):
+        for column, width in enumerate((190, 170, 200, 120, 110, 64), start=1):
             columns.setSectionResizeMode(column, QHeaderView.ResizeMode.Fixed)
             columns.resizeSection(column, width)
         self._table.cellClicked.connect(self._on_cell)
@@ -155,14 +166,56 @@ class AccountsView(QWidget):
         self._empty.setProperty("role", "muted")
         self._empty.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
-        layout = QVBoxLayout(self)
+        content = QWidget()
+        layout = QVBoxLayout(content)
         layout.setContentsMargins(40, 32, 40, 32)
         layout.setSpacing(24)
+        self._evolution = EvolutionView()
+        self._mode = 0
+        self._has_accounts = False
+        self._mode_group = QButtonGroup(self)
+        self._mode_group.setExclusive(True)
+        modes = QHBoxLayout()
+        modes.setSpacing(8)
+        for index, label in enumerate(("Comptes", "Évolution mensuelle")):
+            chip = QPushButton(label)
+            chip.setCheckable(True)
+            chip.setProperty("variant", "chip")
+            chip.setChecked(index == 0)
+            chip.clicked.connect(lambda _=False, i=index: self._set_mode(i))
+            self._mode_group.addButton(chip)
+            modes.addWidget(chip)
+        modes.addStretch(1)
+
         layout.addLayout(header)
         layout.addLayout(cards)
+        layout.addLayout(modes)
         layout.addWidget(self._table)
         layout.addWidget(self._empty)
+        layout.addWidget(self._evolution)
         layout.addStretch(1)
+        self._apply_mode()
+
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
+        scroll.setWidget(content)
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.addWidget(scroll)
+
+    def _set_mode(self, index: int) -> None:
+        self._mode = index
+        self._apply_mode()
+
+    def _apply_mode(self) -> None:
+        accounts = self._mode == 0
+        self._table.setVisible(accounts and self._has_accounts)
+        self._empty.setVisible(accounts and not self._has_accounts)
+        self._evolution.setVisible(not accounts)
+
+    def set_evolution(self, inputs: list[EvolutionInput], today: date) -> None:
+        self._evolution.set_inputs(inputs, today)
 
     def _on_cell(self, row: int, column: int) -> None:
         if column != len(self._COLUMNS) - 1 and 0 <= row < len(self._ids):
@@ -170,8 +223,13 @@ class AccountsView(QWidget):
 
     def set_snapshots(self, snapshots: list[AccountSnapshot]) -> None:
         self._summarize(snapshots)
+        if snapshots:
+            self._table.setHorizontalHeaderItem(
+                5, QTableWidgetItem(f"Intérêts {snapshots[0].year}")
+            )
         self._ids = [s.account.id for s in snapshots if s.account.id is not None]
-        self._table.setRowCount(len(snapshots))
+        totals = self._currency_totals(snapshots)
+        self._table.setRowCount(len(snapshots) + len(totals))
         for row, snap in enumerate(snapshots):
             account = snap.account
             self._table.setCellWidget(
@@ -202,8 +260,8 @@ class AccountsView(QWidget):
                 row,
                 5,
                 _cell(
-                    signed_money(snap.annual_interest, account.currency),
-                    color=theme.GAIN if snap.annual_interest > 0 else theme.TEXT_MUTED,
+                    signed_money(snap.interest_year, account.currency),
+                    color=theme.GAIN if snap.interest_year > 0 else theme.TEXT_MUTED,
                     mono=True,
                     align=_RIGHT,
                 ),
@@ -222,9 +280,62 @@ class AccountsView(QWidget):
             holder_layout.addStretch(1)
             holder_layout.addWidget(edit)
             self._table.setCellWidget(row, len(self._COLUMNS) - 1, holder)
-        self._table.setVisible(bool(snapshots))
-        self._empty.setVisible(not snapshots)
+        for offset, (currency, balance, interest, rate) in enumerate(totals):
+            label = "Total" if len(totals) == 1 else f"Total {currency}"
+            self._fill_total_row(len(snapshots) + offset, label, currency, balance, interest, rate)
+        self._has_accounts = bool(snapshots)
+        self._apply_mode()
         _fit_height(self._table)
+
+    @staticmethod
+    def _currency_totals(
+        snapshots: list[AccountSnapshot],
+    ) -> list[tuple[str, Decimal, Decimal, Decimal]]:
+        """Un total par devise : jamais de somme entre devises."""
+        groups: dict[str, list[AccountSnapshot]] = defaultdict(list)
+        for snap in snapshots:
+            groups[snap.account.currency].append(snap)
+        return [
+            (
+                currency,
+                sum((s.balance for s in items), _ZERO),
+                sum((s.interest_year for s in items), _ZERO),
+                weighted_average_rate((s.balance, s.effective_rate) for s in items),
+            )
+            for currency, items in sorted(groups.items())
+        ]
+
+    def _fill_total_row(
+        self,
+        row: int,
+        label: str,
+        currency: str,
+        balance: Decimal,
+        interest: Decimal,
+        rate: Decimal,
+    ) -> None:
+        self._table.setRowHeight(row, 52)
+        cells = {
+            0: _cell(label),
+            2: _cell(percent(rate), mono=True, align=_RIGHT),
+            4: _cell(money(balance, currency), mono=True, align=_RIGHT),
+            5: _cell(
+                signed_money(interest, currency),
+                color=theme.GAIN if interest > 0 else theme.TEXT_MUTED,
+                mono=True,
+                align=_RIGHT,
+            ),
+        }
+        for column in range(len(self._COLUMNS)):
+            self._table.removeCellWidget(row, column)
+            item = cells.get(column) or _cell("")
+            item.setBackground(QColor(theme.RAISED))
+            item.setFlags(Qt.ItemFlag.ItemIsEnabled)
+            if column in (0, 4):
+                font = item.font()
+                font.setBold(True)
+                item.setFont(font)
+            self._table.setItem(row, column, item)
 
     def _summarize(self, snapshots: list[AccountSnapshot]) -> None:
         """Totaux par devise : on n'additionne jamais des devises différentes."""
@@ -232,7 +343,7 @@ class AccountsView(QWidget):
         interests: dict[str, Decimal] = defaultdict(lambda: _ZERO)
         for snap in snapshots:
             balances[snap.account.currency] += snap.balance
-            interests[snap.account.currency] += snap.annual_interest
+            interests[snap.account.currency] += snap.interest_year
         count = len(snapshots)
         plural = "s" if count > 1 else ""
         if not balances:
@@ -242,9 +353,10 @@ class AccountsView(QWidget):
             " · ".join(money(v, c) for c, v in sorted(balances.items())), f"{count} compte{plural}"
         )
         total_interest = sum(interests.values(), _ZERO)
+        year = snapshots[0].year if snapshots else date.today().year
         self._interest.set(
             " · ".join(signed_money(v, c) for c, v in sorted(interests.items())),
-            "primes de fidélité incluses",
+            f"{year} · primes de fidélité incluses",
             theme.GAIN if total_interest > 0 else theme.TEXT,
         )
         if len(balances) > 1:
@@ -260,6 +372,7 @@ _MOVEMENT_LABELS = {
     MovementKind.OPENING: "Solde d'ouverture",
     MovementKind.DEPOSIT: "Dépôt",
     MovementKind.WITHDRAWAL: "Retrait",
+    MovementKind.INTEREST: "Intérêts",
     MovementKind.LOYALTY_BONUS: "Prime de fidélité",
 }
 
@@ -314,6 +427,7 @@ class AccountDetailView(QWidget):
     backRequested = Signal()
     editRequested = Signal(int)
     movementRequested = Signal(int)
+    movementEditRequested = Signal(int)
     movementDeleteRequested = Signal(int)
 
     def __init__(self) -> None:
@@ -398,7 +512,7 @@ class AccountDetailView(QWidget):
         )
         self._movements.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
         self._movements.horizontalHeader().setSectionResizeMode(4, QHeaderView.ResizeMode.Fixed)
-        self._movements.horizontalHeader().resizeSection(4, 48)
+        self._movements.horizontalHeader().resizeSection(4, 96)
         self._movements_empty = QLabel("Aucun mouvement pour l'instant.")
         self._movements_empty.setProperty("role", "muted")
         self._movements_empty.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -509,7 +623,6 @@ class AccountDetailView(QWidget):
     def _fill_movements(self) -> None:
         assert self._detail is not None
         currency = self._detail.snapshot.account.currency
-        monthly = self._detail.snapshot.account.frequency is InterestFrequency.MONTHLY
         lines = self._detail.lines
         total_in = sum(
             (
@@ -540,10 +653,7 @@ class AccountDetailView(QWidget):
         self._movements.setRowCount(len(shown))
         for row, line in enumerate(shown):
             move = line.movement
-            if move.kind is MovementKind.INTEREST:
-                label = "Intérêts mensuels" if monthly else "Intérêts annuels"
-            else:
-                label = _MOVEMENT_LABELS[move.kind]
+            label = _MOVEMENT_LABELS[move.kind]
             if move.kind is MovementKind.OPENING:
                 amount, color = money(move.amount, currency), theme.TEXT_MUTED
             elif move.signed_amount > 0:
@@ -565,26 +675,42 @@ class AccountDetailView(QWidget):
                     align=_RIGHT,
                 ),
             )
-            if move.kind in (MovementKind.DEPOSIT, MovementKind.WITHDRAWAL):
-                assert move.id is not None
-                delete = QToolButton()
-                delete.setProperty("role", "icon")
-                delete.setIcon(icons.icon("delete", color=theme.LOSS))
-                delete.setIconSize(QSize(18, 18))
-                delete.setToolTip("Supprimer ce mouvement")
-                delete.setAccessibleName(
-                    f"Supprimer {_MOVEMENT_LABELS[move.kind].lower()} du "
-                    f"{move.movement_date.isoformat()}"
-                )
-                delete.setCursor(Qt.CursorShape.PointingHandCursor)
-                delete.clicked.connect(
-                    lambda _=False, movement_id=move.id: self.movementDeleteRequested.emit(
-                        movement_id
-                    )
-                )
-                self._movements.setCellWidget(row, 4, delete)
+            assert move.id is not None
+            self._movements.setCellWidget(row, 4, self._movement_actions(move))
         self._movements.setVisible(bool(shown))
         self._movements_empty.setVisible(not shown)
+
+    def _movement_actions(self, move: CashMovement) -> QWidget:
+        label = f"{_MOVEMENT_LABELS[move.kind].lower()} du {move.movement_date.isoformat()}"
+        movement_id = move.id
+        assert movement_id is not None
+
+        def button(icon_name: str, color: str, tooltip: str, name: str) -> QToolButton:
+            tool = QToolButton()
+            tool.setProperty("role", "icon")
+            tool.setIcon(icons.icon(icon_name, color=color))
+            tool.setIconSize(QSize(18, 18))
+            tool.setToolTip(tooltip)
+            tool.setAccessibleName(f"{name} {label}")
+            tool.setCursor(Qt.CursorShape.PointingHandCursor)
+            return tool
+
+        edit = button("edit", theme.TEXT_MUTED, "Modifier ce mouvement", "Modifier")
+        edit.clicked.connect(
+            lambda _=False: self.movementEditRequested.emit(movement_id)  # noqa: B023
+        )
+        holder = QWidget()
+        layout = QHBoxLayout(holder)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(6)
+        layout.addWidget(edit)
+        if move.kind is not MovementKind.OPENING:
+            delete = button("delete", theme.LOSS, "Supprimer ce mouvement", "Supprimer")
+            delete.clicked.connect(
+                lambda _=False: self.movementDeleteRequested.emit(movement_id)  # noqa: B023
+            )
+            layout.addWidget(delete)
+        return holder
 
     def _fill_rates(self) -> None:
         assert self._detail is not None
@@ -674,6 +800,7 @@ class CashPage(QWidget):
         self._detail.backRequested.connect(self.show_list)
         self._detail.editRequested.connect(self._edit_account)
         self._detail.movementRequested.connect(self._new_movement)
+        self._detail.movementEditRequested.connect(self._edit_movement)
         self._detail.movementDeleteRequested.connect(self._delete_movement)
         self.refresh()
 
@@ -690,7 +817,6 @@ class CashPage(QWidget):
 
     def refresh(self) -> None:
         today = self._today()
-        self._repository.credit_due_yields(today)
         if self._current_id is not None:
             detail = detail_of(self._repository, self._current_id, today)
             if detail is None:
@@ -698,11 +824,17 @@ class CashPage(QWidget):
             else:
                 self._detail.show_detail(detail)
                 self._stack.setCurrentWidget(self._detail)
-        snapshots = [
-            snapshot_of(self._repository, account, today)
-            for account in self._repository.list_accounts()
-        ]
+        accounts = self._repository.list_accounts()
+        snapshots = [snapshot_of(self._repository, account, today) for account in accounts]
         self._list.set_snapshots(snapshots)
+        self._list.set_evolution(
+            [
+                EvolutionInput(account, self._repository.movements(account.id))
+                for account in accounts
+                if account.id is not None
+            ],
+            today,
+        )
 
     # -- dialogues --
 
@@ -790,6 +922,41 @@ class CashPage(QWidget):
             self._repository.add_movement(account_id, form.kind, form.movement_date, form.amount)
         except ValueError as error:
             QMessageBox.warning(self, "Mouvement refusé", str(error))
+        self.refresh()
+
+    def _edit_movement(self, movement_id: int) -> None:
+        if self._current_id is None:
+            return
+        account_id = self._current_id
+        account = self._repository.get_account(account_id)
+        existing = self._repository.movements(account_id)
+        target = next((m for m in existing if m.id == movement_id), None)
+        if account is None or target is None:
+            return
+        others = [m for m in existing if m.id != movement_id]
+
+        def validate(form: MovementForm) -> None:
+            check_movement_allowed(
+                others,
+                CashMovement(movement_id, account_id, form.kind, form.movement_date, form.amount),
+            )
+
+        dialog = MovementDialog(
+            self,
+            today=self._today(),
+            balance_text=money(balance_of(existing), account.currency),
+            movement=target,
+            validator=validate,
+        )
+        if dialog.exec() != MovementDialog.DialogCode.Accepted:
+            return
+        form = dialog.form()
+        try:
+            self._repository.update_movement(
+                account_id, movement_id, form.kind, form.movement_date, form.amount
+            )
+        except ValueError as error:
+            QMessageBox.warning(self, "Modification refusée", str(error))
         self.refresh()
 
     def _delete_movement(self, movement_id: int) -> None:

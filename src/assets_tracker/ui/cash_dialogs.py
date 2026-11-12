@@ -31,6 +31,7 @@ from assets_tracker.domain.cash import (
     BaseRateChange,
     BonusDefinition,
     CashAccount,
+    CashMovement,
     InterestFrequency,
     MovementKind,
     format_iban,
@@ -332,11 +333,13 @@ class AccountDialog(QDialog):
 
 
 class MovementDialog(QDialog):
-    """Saisie d'un mouvement (dépôt, retrait, intérêts versés, solde d'ouverture)."""
+    """Saisie d'un mouvement (dépôt, retrait, intérêts, prime de fidélité, solde d'ouverture)."""
 
     _KINDS = (
         ("Dépôt", MovementKind.DEPOSIT),
         ("Retrait", MovementKind.WITHDRAWAL),
+        ("Intérêts", MovementKind.INTEREST),
+        ("Prime de fidélité", MovementKind.LOYALTY_BONUS),
         ("Solde d'ouverture", MovementKind.OPENING),
     )
 
@@ -346,11 +349,12 @@ class MovementDialog(QDialog):
         *,
         today: date,
         balance_text: str,
+        movement: CashMovement | None = None,
         validator: Callable[[MovementForm], None] | None = None,
     ) -> None:
         super().__init__(parent)
         self._validator = validator
-        self.setWindowTitle("Nouveau mouvement")
+        self.setWindowTitle("Nouveau mouvement" if movement is None else "Modifier le mouvement")
         self.setMinimumWidth(420)
 
         self._kind = QComboBox()
@@ -358,7 +362,10 @@ class MovementDialog(QDialog):
             self._kind.addItem(label, kind)
         self._amount = QLineEdit()
         self._amount.setPlaceholderText("0,00")
-        self._date = _date_edit(today)
+        self._date = _date_edit(movement.movement_date if movement else today)
+        if movement is not None:
+            self._kind.setCurrentIndex(self._kind.findData(movement.kind))
+            self._amount.setText(format_number(movement.amount))
         self._error = QLabel()
         self._error.setProperty("role", "error")
         self._error.setWordWrap(True)

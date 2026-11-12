@@ -15,6 +15,7 @@ from assets_tracker.db.cash_repository import CashRepository
 from assets_tracker.db.connection import connect
 from assets_tracker.domain.cash import (
     CashAccount,
+    CashMovement,
     InterestFrequency,
     MovementKind,
 )
@@ -70,6 +71,7 @@ def repo(conn: Any) -> CashRepository:
     assert avenir.id is not None
     repository.add_movement(avenir.id, MovementKind.DEPOSIT, date(2025, 10, 12), D("10000"))
     repository.add_movement(avenir.id, MovementKind.INTEREST, date(2026, 11, 1), D("25"))
+    repository.add_movement(avenir.id, MovementKind.LOYALTY_BONUS, date(2026, 11, 1), D("12"))
     return repository
 
 
@@ -90,20 +92,21 @@ def click_cell(qtbot: QtBot, page: CashPage, row: int, column: int) -> None:
 
 def test_list_shows_accounts_with_masked_iban_and_computed_figures(page: CashPage) -> None:
     table = page._list._table
-    assert table.rowCount() == 2
+    assert table.rowCount() == 3  # deux comptes et la ligne de total
     assert table.item(0, 1).text() == "FR76 •••• •••• 0189"
     assert "2 000,00" in table.item(0, 4).text()
-    assert "+60,00" in table.item(0, 5).text()  # 3 % de 2 000 €
+    assert table.item(0, 5).text() == "0,00\u00a0€"  # aucun intérêt saisi en 2026
     # Livret Avenir : 1,5 % de base + 1,5 % de prime (condition remplie depuis 2025-06-01)
     assert "3,00" in table.cellWidget(1, 2).text()
     assert "prime" in table.cellWidget(1, 2).text()
-    assert table.item(1, 5).text().startswith("+")
+    assert "+37,00" in table.item(1, 5).text()  # 25 d'intérêts + 12 de prime saisis en 2026
+    assert table.horizontalHeaderItem(5).text() == "Intérêts 2026"
 
 
 def test_summary_cards_total_per_currency(page: CashPage) -> None:
     total = page._list._total._value.text()
     assert total.startswith("12") and total.endswith("\u00a0€")
-    assert page._list._interest._value.text().startswith("+")
+    assert "+37,00" in page._list._interest._value.text()
     assert page._list._average._value.text().startswith("3,00")  # (2000×3 + 10025×3) / 12025
 
 
@@ -187,6 +190,56 @@ def test_reopened_dialog_shows_the_saved_effective_date(
     page._edit_account(account.id)
 
     assert shown == [saved]
+
+
+def test_movement_dialog_offers_interest_and_loyalty_bonus(qtbot: QtBot) -> None:
+    dialog = MovementDialog(None, today=TODAY, balance_text="0,00 €")
+    qtbot.addWidget(dialog)
+    kinds = [dialog._kind.itemData(i) for i in range(dialog._kind.count())]
+    assert MovementKind.INTEREST in kinds
+    assert MovementKind.LOYALTY_BONUS in kinds
+
+    dialog._kind.setCurrentIndex(kinds.index(MovementKind.LOYALTY_BONUS))
+    dialog._amount.setText("4,20")
+    assert dialog.form().kind is MovementKind.LOYALTY_BONUS
+
+
+def test_editing_a_movement_updates_it(
+    qtbot: QtBot, page: CashPage, repo: CashRepository, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    click_cell(qtbot, page, 1, 1)
+    account_id = page._current_id
+    assert account_id is not None
+    interest = next(m for m in repo.movements(account_id) if m.kind is MovementKind.INTEREST)
+    assert interest.id is not None
+    monkeypatch.setattr(MovementDialog, "exec", lambda self: MovementDialog.DialogCode.Accepted)
+    monkeypatch.setattr(
+        MovementDialog,
+        "form",
+        lambda self: MovementForm(MovementKind.LOYALTY_BONUS, date(2026, 11, 2), D("30")),
+    )
+
+    page._detail.movementEditRequested.emit(interest.id)
+
+    saved = next(m for m in repo.movements(account_id) if m.id == interest.id)
+    assert (saved.kind, saved.movement_date, saved.amount) == (
+        MovementKind.LOYALTY_BONUS,
+        date(2026, 11, 2),
+        D("30"),
+    )
+
+
+def test_movement_dialog_is_prefilled_when_editing(qtbot: QtBot) -> None:
+    movement = CashMovement(1, 1, MovementKind.INTEREST, date(2026, 3, 4), D("12.5"))
+    dialog = MovementDialog(None, today=TODAY, balance_text="0,00 €", movement=movement)
+    qtbot.addWidget(dialog)
+
+    form = dialog.form()
+    assert (form.kind, form.movement_date, form.amount) == (
+        MovementKind.INTEREST,
+        date(2026, 3, 4),
+        D("12.5"),
+    )
 
 
 def test_new_movement_is_recorded_and_withdrawal_beyond_balance_is_refused(
@@ -331,3 +384,121 @@ def test_rate_chart_renders(qtbot: QtBot) -> None:
         TODAY,
     )
     assert not chart.grab().isNull()
+
+
+def test_list_ends_with_a_total_row_that_is_not_clickable(qtbot: QtBot, page: CashPage) -> None:
+    table = page._list._table
+
+    assert table.item(2, 0).text() == "Total"
+    assert table.item(2, 4).text() == "12\u202f037,00\u00a0€"  # 2 000 € + 10 037 €
+    assert table.item(2, 5).text() == "+37,00\u00a0€"
+    assert table.item(2, 2).text() == "3,00\u00a0%"  # taux moyen pondéré par les soldes
+
+    click_cell(qtbot, page, 2, 4)
+    assert page._stack.currentWidget() is page._list
+
+
+def test_total_rows_are_split_by_currency(page: CashPage, repo: CashRepository) -> None:
+    usd = repo.create_account(
+        CashAccount(
+            None,
+            "Compte USD",
+            "Chase",
+            "DE89370400440532013000",
+            "USD",
+            date(2026, 1, 1),
+            InterestFrequency.MONTHLY,
+        ),
+        D("2.00"),
+    )
+    assert usd.id is not None
+    repo.add_movement(usd.id, MovementKind.DEPOSIT, date(2026, 2, 3), D("500"))
+
+    page.refresh()
+    table = page._list._table
+
+    assert [table.item(r, 0).text() for r in (3, 4)] == ["Total EUR", "Total USD"]
+    assert table.item(4, 4).text() == "500,00\u00a0$"
+
+
+def test_evolution_view_shows_month_by_month_balances_and_total(page: CashPage) -> None:
+    page._list._set_mode(1)
+    evolution = page._list._evolution
+
+    assert not evolution.isHidden()
+    assert page._list._table.isHidden()
+    assert len(evolution.months()) == 12  # décembre 2025 à novembre 2026
+    table = evolution._table
+    assert [table.horizontalHeaderItem(c).text() for c in range(table.columnCount())] == [
+        "Mois",
+        "Livret A",
+        "Livret Avenir",
+        "Total",
+        "Variation",
+    ]
+    assert table.item(0, 0).text() == "novembre 2026 (en cours)"
+    assert table.item(0, 3).text() == "12\u202f037,00\u00a0€"
+    assert "+37,00" in table.item(0, 4).text()  # intérêts et prime du 1er novembre
+    last = table.rowCount() - 1
+    assert table.item(last, 0).text() == "décembre 2025"
+    assert table.item(last, 1).text() == "0,00\u00a0€"  # compte ouvert, encore vide
+    assert table.item(last, 3).text() == "10\u202f000,00\u00a0€"
+    assert table.item(last, 4).text() == "—"  # premier mois : pas de variation
+
+
+def test_evolution_period_and_back_to_accounts(page: CashPage) -> None:
+    page._list._set_mode(1)
+    evolution = page._list._evolution
+
+    evolution._set_period(36)
+    assert len(evolution.months()) == 35  # jamais avant l'ouverture du premier compte (2024-01)
+    evolution._set_period(0)
+    assert len(evolution.months()) == 35
+
+    page._list._set_mode(0)
+    assert evolution.isHidden()
+    assert not page._list._table.isHidden()
+
+
+def test_evolution_shows_a_currency_selector_only_with_several_currencies(
+    page: CashPage, repo: CashRepository
+) -> None:
+    evolution = page._list._evolution
+    assert evolution._currency.isHidden()
+
+    usd = repo.create_account(
+        CashAccount(
+            None,
+            "Compte USD",
+            "Chase",
+            "DE89370400440532013000",
+            "USD",
+            date(2026, 1, 1),
+            InterestFrequency.MONTHLY,
+        ),
+        D("2.00"),
+    )
+    assert usd.id is not None
+    repo.add_movement(usd.id, MovementKind.DEPOSIT, date(2026, 2, 3), D("500"))
+    page.refresh()
+    page._list._set_mode(1)
+
+    assert not evolution._currency.isHidden()
+    evolution._currency.setCurrentText("USD")
+    assert [
+        evolution._table.horizontalHeaderItem(c).text()
+        for c in range(evolution._table.columnCount())
+    ] == ["Mois", "Compte USD", "Total", "Variation"]
+    assert evolution._table.item(0, 2).text() == "500,00\u00a0$"
+
+
+def test_monthly_table_is_capped_and_scrolls(page: CashPage) -> None:
+    page._list._set_mode(1)
+    evolution = page._list._evolution
+    table = evolution._table
+
+    assert table.rowCount() == 12
+    assert table.height() <= 340  # plafonné : 12 lignes de 44 px ne tiennent pas
+    table.resize(table.width(), 340)
+    assert table.verticalScrollBar().maximum() > 0
+    assert page._list._table.isHidden()

@@ -15,6 +15,7 @@ from assets_tracker.domain.cash import (
     CashAccount,
     InterestFrequency,
     MovementKind,
+    balance_of,
 )
 
 D = Decimal
@@ -213,26 +214,6 @@ def test_deleting_a_deposit_that_funds_a_withdrawal_is_refused(repo: CashReposit
     assert len(repo.movements(account.id)) == 2
 
 
-def test_due_base_interest_and_loyalty_bonus_are_credited_separately(
-    repo: CashRepository,
-) -> None:
-    account = repo.create_account(
-        new_account(opened_on=date(2026, 1, 1)), D("3.65"), bonus=(D("3.65"), 0)
-    )
-    assert account.id is not None
-    repo.add_movement(account.id, MovementKind.DEPOSIT, date(2026, 1, 1), D("1000"))
-
-    repo.credit_due_yields(date(2026, 2, 1))
-
-    credited = repo.movements(account.id)
-    assert [(m.kind, m.movement_date, m.amount) for m in credited[1:]] == [
-        (MovementKind.INTEREST, date(2026, 2, 1), D("3.10")),
-        (MovementKind.LOYALTY_BONUS, date(2026, 2, 1), D("3.10")),
-    ]
-    repo.credit_due_yields(date(2026, 2, 1))
-    assert repo.movements(account.id) == credited
-
-
 def test_deleting_an_account_removes_its_history(repo: CashRepository, conn: Any) -> None:
     account = repo.create_account(new_account(), D("1.00"), bonus=(D("1.50"), 12))
     assert account.id is not None
@@ -245,21 +226,48 @@ def test_deleting_an_account_removes_its_history(repo: CashRepository, conn: Any
         assert conn.execute(f"SELECT count(*) AS n FROM {table}").fetchone()["n"] == 0
 
 
-def test_interest_accrues_from_a_movement_dated_before_the_opening(repo: CashRepository) -> None:
-    account = repo.create_account(
-        new_account(
-            opened_on=date(2026, 11, 11),
-            frequency=InterestFrequency.MONTHLY,
-            payout_month=None,
-            payout_day=None,
-        ),
-        D("3.00"),
-    )
+def test_interest_and_loyalty_bonus_are_entered_manually(repo: CashRepository) -> None:
+    account = repo.create_account(new_account(), D("3.00"), bonus=(D("1.00"), 0))
     assert account.id is not None
-    repo.update_account(account, base_rate=D("3.00"), bonus=None, effective_date=date(2026, 10, 1))
-    repo.add_movement(account.id, MovementKind.OPENING, date(2026, 10, 1), D("1000"))
+    repo.add_movement(account.id, MovementKind.DEPOSIT, date(2026, 1, 1), D("1000"))
 
-    repo.credit_due_yields(date(2026, 11, 12))
+    repo.add_movement(account.id, MovementKind.INTEREST, date(2026, 2, 1), D("2.55"))
+    repo.add_movement(account.id, MovementKind.LOYALTY_BONUS, date(2026, 2, 1), D("0.85"))
 
-    interest = [m for m in repo.movements(account.id) if m.kind is MovementKind.INTEREST]
-    assert [(m.movement_date, m.amount) for m in interest] == [(date(2026, 11, 1), D("2.55"))]
+    assert [(m.kind, m.amount) for m in repo.movements(account.id)[1:]] == [
+        (MovementKind.INTEREST, D("2.55")),
+        (MovementKind.LOYALTY_BONUS, D("0.85")),
+    ]
+    assert balance_of(repo.movements(account.id)) == D("1003.40")
+
+
+def test_update_movement_changes_kind_date_and_amount(repo: CashRepository) -> None:
+    account = repo.create_account(new_account(), D("3.00"))
+    assert account.id is not None
+    deposit = repo.add_movement(account.id, MovementKind.DEPOSIT, date(2026, 1, 1), D("100"))
+    assert deposit.id is not None
+
+    repo.update_movement(account.id, deposit.id, MovementKind.INTEREST, date(2026, 2, 1), D("2.55"))
+
+    [saved] = repo.movements(account.id)
+    assert (saved.id, saved.kind, saved.movement_date, saved.amount) == (
+        deposit.id,
+        MovementKind.INTEREST,
+        date(2026, 2, 1),
+        D("2.55"),
+    )
+
+
+def test_update_movement_refuses_a_negative_balance(repo: CashRepository) -> None:
+    account = repo.create_account(new_account(), D("3.00"))
+    assert account.id is not None
+    deposit = repo.add_movement(account.id, MovementKind.DEPOSIT, date(2026, 1, 1), D("100"))
+    repo.add_movement(account.id, MovementKind.WITHDRAWAL, date(2026, 1, 2), D("80"))
+    assert deposit.id is not None
+
+    with pytest.raises(ValueError, match="Solde insuffisant"):
+        repo.update_movement(
+            account.id, deposit.id, MovementKind.DEPOSIT, date(2026, 1, 1), D("50")
+        )
+
+    assert repo.movements(account.id)[0].amount == D("100")

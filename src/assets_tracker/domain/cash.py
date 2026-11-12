@@ -307,6 +307,19 @@ def check_movement_allowed(existing: Sequence[CashMovement], candidate: CashMove
 # --- Intérêts ---------------------------------------------------------------
 
 
+def interest_received_in_year(movements: Iterable[CashMovement], year: int) -> Decimal:
+    """Somme des intérêts et primes de fidélité saisis, datés de l'année civile `year`."""
+    return sum(
+        (
+            m.amount
+            for m in movements
+            if m.kind in (MovementKind.INTEREST, MovementKind.LOYALTY_BONUS)
+            and m.movement_date.year == year
+        ),
+        ZERO,
+    )
+
+
 def estimated_annual_interest(balance: Decimal, rate_percent: Decimal) -> Decimal:
     """Intérêts annuels estimés au solde et taux actuels (estimation, sans capitalisation)."""
     return (balance * rate_percent / 100).quantize(_CENT, rounding=ROUND_HALF_UP)
@@ -348,3 +361,62 @@ def weighted_average_rate(positions: Iterable[tuple[Decimal, Decimal]]) -> Decim
     if total == ZERO:
         return ZERO
     return (weighted / total).quantize(_CENT, rounding=ROUND_HALF_UP)
+
+
+# --- Évolution mensuelle ----------------------------------------------------
+
+
+def month_start(day: date) -> date:
+    return day.replace(day=1)
+
+
+def month_end(month: date) -> date:
+    return date(month.year, month.month, calendar.monthrange(month.year, month.month)[1])
+
+
+def months_range(first: date, last: date) -> list[date]:
+    """Premiers jours des mois, de celui de `first` à celui de `last` inclus."""
+    months: list[date] = []
+    current = month_start(first)
+    stop = month_start(last)
+    while current <= stop:
+        months.append(current)
+        current = add_months(current, 1)
+    return months
+
+
+def trailing_months(today: date, count: int) -> list[date]:
+    """Les `count` derniers mois, mois en cours inclus."""
+    return months_range(add_months(month_start(today), -(count - 1)), today)
+
+
+def first_month(opened_on: date, movements: Iterable[CashMovement]) -> date:
+    """Premier mois d'existence d'un compte : ouverture ou premier mouvement si plus ancien."""
+    return month_start(min([opened_on, *(m.movement_date for m in movements)]))
+
+
+def monthly_balances(
+    opened_on: date,
+    movements: Iterable[CashMovement],
+    months: Sequence[date],
+    today: date,
+) -> list[Decimal | None]:
+    """Solde de fin de mois pour chaque mois (le mois en cours s'arrête à `today`).
+
+    `None` avant l'existence du compte : il n'y a pas de solde, pas un solde de 0.
+    """
+    ordered = sorted(movements, key=lambda m: m.movement_date)
+    existing_since = min([opened_on, *(m.movement_date for m in ordered)])
+    balances: list[Decimal | None] = []
+    for month in months:
+        cutoff = min(month_end(month), today)
+        if cutoff < existing_since:
+            balances.append(None)
+            continue
+        balances.append(sum((m.signed_amount for m in ordered if m.movement_date <= cutoff), ZERO))
+    return balances
+
+
+def sum_balances(series: Sequence[Sequence[Decimal | None]], length: int) -> list[Decimal]:
+    """Total mois par mois ; un compte pas encore ouvert compte pour 0."""
+    return [sum((s[i] or ZERO for s in series), ZERO) for i in range(length)]

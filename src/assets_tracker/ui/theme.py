@@ -25,6 +25,9 @@ GAIN = "#3DDC97"
 LOSS = "#FF7A8A"
 WARNING = "#F5B84B"
 
+# Couleurs de séries (un compte = une couleur), distinctes du vert gain / rouge perte.
+SERIES = ("#5CC8FF", "#B38CFF", "#FF9F7A", "#4FD1C5", "#F5B84B", "#7C8CFF")
+
 ALT_ROW = "#151922"
 HOVER_ROW = "#1B2030"
 ACCENT_SOFT = "#2A3050"
@@ -37,6 +40,7 @@ WARNING_SOFT = "#2B2210"
 RADIUS_FIELD = 8
 RADIUS_BUTTON = 10
 RADIUS_CARD = 14
+RADIUS_CARD_INNER = RADIUS_CARD - 1  # rayon intérieur d'un cadre de 1 px de bordure
 
 MONO_FONT = "JetBrains Mono, Menlo, Consolas, monospace"
 
@@ -124,6 +128,12 @@ QLineEdit, QSpinBox, QDoubleSpinBox, QComboBox, QDateEdit {{
 }}
 QLineEdit:focus, QSpinBox:focus, QDoubleSpinBox:focus, QComboBox:focus,
 QDateEdit:focus {{ border: 2px solid {ACCENT}; }}
+QComboBox::drop-down {{ border: none; width: 28px; }}
+QComboBox QAbstractItemView {{
+    background: {RAISED}; border: 1px solid {BORDER_STRONG}; border-radius: {RADIUS_FIELD}px;
+    padding: 4px; outline: 0; selection-background-color: {ACCENT}; selection-color: {BG};
+}}
+QComboBox QAbstractItemView::item {{ min-height: 32px; padding: 0 8px; }}
 QTableView, QTableWidget {{
     background: {SURFACE}; alternate-background-color: {ALT_ROW};
     border: 1px solid {BORDER}; border-radius: {RADIUS_CARD}px;
@@ -134,6 +144,12 @@ QHeaderView::section {{
     background: {RAISED}; color: {TEXT_MUTED}; border: none;
     padding: 12px; font-size: 12px; font-weight: 600;
 }}
+QHeaderView {{
+    background: {RAISED}; border: none;
+    border-top-left-radius: {RADIUS_CARD_INNER}px; border-top-right-radius: {RADIUS_CARD_INNER}px;
+}}
+QHeaderView::section:first {{ border-top-left-radius: {RADIUS_CARD_INNER}px; }}
+QHeaderView::section:last {{ border-top-right-radius: {RADIUS_CARD_INNER}px; }}
 QTabBar {{ qproperty-drawBase: 0; }}
 QTabBar::tab {{
     padding: 10px 16px; color: {TEXT_MUTED}; border: none; border-bottom: 2px solid transparent;

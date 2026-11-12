@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import date
 from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 
 from assets_tracker.domain.cash import CashAccount, InterestFrequency
@@ -25,6 +26,21 @@ MONTHS_FR = (
     "décembre",
 )
 
+_MONTHS_SHORT = (
+    "janv.",
+    "févr.",
+    "mars",
+    "avr.",
+    "mai",
+    "juin",
+    "juil.",
+    "août",
+    "sept.",
+    "oct.",
+    "nov.",
+    "déc.",
+)
+
 _CURRENCY_SYMBOLS = {"EUR": "€", "USD": "$", "GBP": "£"}
 
 
@@ -39,6 +55,11 @@ def format_number(value: Decimal, places: int = 2) -> str:
 
 def money(amount: Decimal, currency: str) -> str:
     return f"{format_number(amount)}{NBSP}{_CURRENCY_SYMBOLS.get(currency, currency)}"
+
+
+def compact_money(amount: Decimal, currency: str) -> str:
+    """Montant sans décimales, pour les graduations d'un axe : `12 500 €`."""
+    return f"{format_number(amount, 0)}{NBSP}{_CURRENCY_SYMBOLS.get(currency, currency)}"
 
 
 def signed_money(amount: Decimal, currency: str) -> str:
@@ -78,3 +99,9 @@ def parse_decimal(text: str, field: str) -> Decimal:
     if not value.is_finite():
         raise ValueError(f"{field} : nombre invalide.")
     return value
+
+
+def month_label(month: date, *, short: bool = False) -> str:
+    """`novembre 2026` (ou `nov. 2026` en abrégé)."""
+    names = _MONTHS_SHORT if short else MONTHS_FR
+    return f"{names[month.month - 1]} {month.year}"

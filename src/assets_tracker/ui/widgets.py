@@ -53,11 +53,16 @@ def prepare_table(table: QTableWidget, headers: list[str], *, row_height: int) -
     )
 
 
-def fit_height(table: QTableWidget) -> None:
-    """Donne au tableau la hauteur de ses lignes pour qu'il défile avec la page."""
-    rows = table.rowCount()
-    height = table.horizontalHeader().height() + table.verticalHeader().defaultSectionSize() * rows
-    table.setFixedHeight(max(height + 4, 120))
+def fit_height(table: QTableWidget, max_height: int | None = None) -> None:
+    """Donne au tableau la hauteur de ses lignes.
+
+    Avec `max_height`, le tableau est plafonné et défile en interne au-delà.
+    """
+    height = table.horizontalHeader().height() + sum(
+        table.rowHeight(row) for row in range(table.rowCount())
+    )
+    height = max(height + 4, 120)
+    table.setFixedHeight(height if max_height is None else min(height, max_height))
 
 
 class Card(QFrame):
