@@ -260,6 +260,7 @@ _MOVEMENT_LABELS = {
     MovementKind.OPENING: "Solde d'ouverture",
     MovementKind.DEPOSIT: "Dépôt",
     MovementKind.WITHDRAWAL: "Retrait",
+    MovementKind.LOYALTY_BONUS: "Prime de fidélité",
 }
 
 
@@ -287,7 +288,8 @@ def detail_of(repository: CashRepository, account_id: int, today: date) -> Accou
         (
             m.amount
             for m in movements
-            if m.kind is MovementKind.INTEREST and since < m.movement_date <= today
+            if m.kind in (MovementKind.INTEREST, MovementKind.LOYALTY_BONUS)
+            and since < m.movement_date <= today
         ),
         _ZERO,
     )
@@ -344,7 +346,7 @@ class AccountDetailView(QWidget):
 
         self._balance = _Card("Solde")
         self._rate = _Card("Taux effectif")
-        self._interest = _Card("Intérêts perçus · 12 mois")
+        self._interest = _Card("Intérêts et primes perçus · 12 mois")
         cards = QHBoxLayout()
         cards.setSpacing(16)
         for card in (self._balance, self._rate, self._interest):
@@ -688,6 +690,7 @@ class CashPage(QWidget):
 
     def refresh(self) -> None:
         today = self._today()
+        self._repository.credit_due_yields(today)
         if self._current_id is not None:
             detail = detail_of(self._repository, self._current_id, today)
             if detail is None:
@@ -729,13 +732,24 @@ class CashPage(QWidget):
         if account is None:
             return
         today = self._today()
+        rates = self._repository.base_rates(account_id)
         bonuses = self._repository.bonuses(account_id)
+        # La date d'ouverture n'entre pas en compte : sinon elle masquerait une date d'effet
+        # antérieure que l'utilisateur vient d'enregistrer.
+        latest_effective = max(
+            [
+                *(rate.effective_date for rate in rates),
+                *(bonus.effective_date for bonus in bonuses),
+            ],
+            default=account.opened_on,
+        )
         dialog = AccountDialog(
             self,
             account=account,
-            base_rate=base_rate_on(self._repository.base_rates(account_id), today),
+            base_rate=base_rate_on(rates, today),
             bonus=bonuses[-1] if bonuses else None,
             today=today,
+            effective_date=latest_effective,
             validator=self._check_iban_free,
         )
         result = dialog.exec()

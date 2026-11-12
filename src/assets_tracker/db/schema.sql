@@ -60,7 +60,7 @@ CREATE TABLE IF NOT EXISTS cash_account_bonuses (
 CREATE TABLE IF NOT EXISTS cash_movements (
     id            INTEGER PRIMARY KEY,
     account_id    INTEGER NOT NULL REFERENCES cash_accounts(id) ON DELETE CASCADE,
-    kind          TEXT NOT NULL CHECK (kind IN ('OPENING', 'DEPOSIT', 'WITHDRAWAL', 'INTEREST')),
+    kind          TEXT NOT NULL CHECK (kind IN ('OPENING', 'DEPOSIT', 'WITHDRAWAL', 'INTEREST', 'LOYALTY_BONUS')),
     movement_date TEXT NOT NULL,
     amount        TEXT NOT NULL
 );

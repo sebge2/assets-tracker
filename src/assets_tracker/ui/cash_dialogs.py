@@ -115,6 +115,7 @@ class AccountDialog(QDialog):
         base_rate: Decimal | None,
         bonus: BonusDefinition | None,
         today: date,
+        effective_date: date | None = None,
         validator: Callable[[AccountForm], None] | None = None,
     ) -> None:
         super().__init__(parent)
@@ -136,7 +137,7 @@ class AccountDialog(QDialog):
         self._currency.setEnabled(account is None)  # la devise est figée après création
         self._rate = QLineEdit(format_number(base_rate) if base_rate is not None else "")
         self._rate.setPlaceholderText("0,00")
-        self._effective = _date_edit(today)
+        self._effective = _date_edit(effective_date or today)
 
         self._annual_button = QPushButton("Annuel")
         self._monthly_button = QPushButton("Mensuel")
@@ -336,7 +337,6 @@ class MovementDialog(QDialog):
     _KINDS = (
         ("Dépôt", MovementKind.DEPOSIT),
         ("Retrait", MovementKind.WITHDRAWAL),
-        ("Intérêts versés", MovementKind.INTEREST),
         ("Solde d'ouverture", MovementKind.OPENING),
     )
 

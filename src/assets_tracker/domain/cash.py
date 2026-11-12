@@ -4,9 +4,9 @@ from __future__ import annotations
 
 import calendar
 import re
-from collections.abc import Iterable, Sequence
+from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, timedelta
 from decimal import ROUND_HALF_UP, Decimal
 from enum import StrEnum
 
@@ -25,6 +25,7 @@ class MovementKind(StrEnum):
     DEPOSIT = "DEPOSIT"
     WITHDRAWAL = "WITHDRAWAL"
     INTEREST = "INTEREST"
+    LOYALTY_BONUS = "LOYALTY_BONUS"
 
 
 class BonusEventKind(StrEnum):
@@ -273,7 +274,8 @@ _KIND_ORDER = {
     MovementKind.OPENING: 0,
     MovementKind.DEPOSIT: 1,
     MovementKind.INTEREST: 2,
-    MovementKind.WITHDRAWAL: 3,
+    MovementKind.LOYALTY_BONUS: 3,
+    MovementKind.WITHDRAWAL: 4,
 }
 
 
@@ -308,6 +310,32 @@ def check_movement_allowed(existing: Sequence[CashMovement], candidate: CashMove
 def estimated_annual_interest(balance: Decimal, rate_percent: Decimal) -> Decimal:
     """Intérêts annuels estimés au solde et taux actuels (estimation, sans capitalisation)."""
     return (balance * rate_percent / 100).quantize(_CENT, rounding=ROUND_HALF_UP)
+
+
+def accrued_interest(
+    movements: Iterable[CashMovement],
+    start: date,
+    end: date,
+    annual_rate: Callable[[date], Decimal],
+) -> Decimal:
+    """Intérêt brut au prorata journalier, sur le solde de fin de journée."""
+    if end < start:
+        return ZERO
+    by_date: dict[date, list[CashMovement]] = {}
+    opening_balance = ZERO
+    for movement in movements:
+        if movement.movement_date < start:
+            opening_balance += movement.signed_amount
+        elif movement.movement_date <= end:
+            by_date.setdefault(movement.movement_date, []).append(movement)
+    balance = opening_balance
+    accrued = ZERO
+    current = start
+    while current <= end:
+        balance += sum((m.signed_amount for m in by_date.get(current, [])), ZERO)
+        accrued += balance * annual_rate(current) / Decimal("36500")
+        current += timedelta(days=1)
+    return accrued.quantize(_CENT, rounding=ROUND_HALF_UP)
 
 
 def weighted_average_rate(positions: Iterable[tuple[Decimal, Decimal]]) -> Decimal:

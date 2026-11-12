@@ -60,7 +60,39 @@ def connect(path: Path | str, key_provider: Callable[[], bytes] = database_key) 
         conn.executescript(
             resources.files("assets_tracker.db").joinpath("schema.sql").read_text("utf-8")
         )
+        _migrate(conn)
     except Exception:
         conn.close()
         raise
     return conn
+
+
+def _migrate(conn: Any) -> None:
+    """Applique les migrations SQLite sans perdre l'historique local."""
+    version = int(conn.execute("PRAGMA user_version").fetchone()[0])
+    if version >= 1:
+        return
+    definition = conn.execute(
+        "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'cash_movements'"
+    ).fetchone()[0]
+    if "LOYALTY_BONUS" not in definition:
+        with conn:
+            conn.execute(
+                "CREATE TABLE cash_movements_new ("
+                "id INTEGER PRIMARY KEY, "
+                "account_id INTEGER NOT NULL REFERENCES cash_accounts(id) ON DELETE CASCADE, "
+                "kind TEXT NOT NULL CHECK (kind IN "
+                "('OPENING', 'DEPOSIT', 'WITHDRAWAL', 'INTEREST', 'LOYALTY_BONUS')), "
+                "movement_date TEXT NOT NULL, amount TEXT NOT NULL)"
+            )
+            conn.execute(
+                "INSERT INTO cash_movements_new "
+                "SELECT id, account_id, kind, movement_date, amount FROM cash_movements"
+            )
+            conn.execute("DROP TABLE cash_movements")
+            conn.execute("ALTER TABLE cash_movements_new RENAME TO cash_movements")
+            conn.execute(
+                "CREATE INDEX idx_cash_movements_account "
+                "ON cash_movements(account_id, movement_date)"
+            )
+    conn.execute("PRAGMA user_version = 1")

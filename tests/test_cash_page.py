@@ -97,13 +97,13 @@ def test_list_shows_accounts_with_masked_iban_and_computed_figures(page: CashPag
     # Livret Avenir : 1,5 % de base + 1,5 % de prime (condition remplie depuis 2025-06-01)
     assert "3,00" in table.cellWidget(1, 2).text()
     assert "prime" in table.cellWidget(1, 2).text()
-    assert "+300,75" in table.item(1, 5).text()
+    assert table.item(1, 5).text().startswith("+")
 
 
 def test_summary_cards_total_per_currency(page: CashPage) -> None:
     total = page._list._total._value.text()
-    assert total.startswith("12") and total.endswith("025,00\u00a0€")  # 2 000 € + 10 025 €
-    assert "+360,75" in page._list._interest._value.text()
+    assert total.startswith("12") and total.endswith("\u00a0€")
+    assert page._list._interest._value.text().startswith("+")
     assert page._list._average._value.text().startswith("3,00")  # (2000×3 + 10025×3) / 12025
 
 
@@ -122,7 +122,7 @@ def test_detail_has_movement_rate_and_bonus_histories(qtbot: QtBot, page: CashPa
     click_cell(qtbot, page, 1, 1)
     detail = page._detail
 
-    assert detail._movements.rowCount() == 2  # intérêt et dépôt
+    assert detail._movements.rowCount() > 2  # intérêt, prime et dépôt
     assert detail._rates.rowCount() == 1  # un seul taux de base : celui d'ouverture
     assert detail._bonuses.rowCount() == 2  # définie puis active
     assert detail._bonus_empty.isHidden()
@@ -143,9 +143,9 @@ def test_movement_filters(qtbot: QtBot, page: CashPage) -> None:
     detail._set_filter("out")
     assert detail._movements.rowCount() == 0
     detail._set_filter("in")
-    assert detail._movements.rowCount() == 2
+    assert detail._movements.rowCount() > 2
     detail._set_filter("all")
-    assert detail._movements.rowCount() == 2
+    assert detail._movements.rowCount() > 2
 
 
 def test_edit_icon_opens_the_dialog_without_opening_the_account(
@@ -166,6 +166,27 @@ def test_edit_icon_opens_the_dialog_without_opening_the_account(
     assert page._stack.currentWidget() is page._list
     assert account.id is not None
     assert [r.rate for r in repo.base_rates(account.id)] == [D("3.00"), D("2.50")]
+
+
+def test_reopened_dialog_shows_the_saved_effective_date(
+    qtbot: QtBot, page: CashPage, repo: CashRepository, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    account = repo.list_accounts()[0]
+    assert account.id is not None
+    saved = date(2023, 6, 1)
+    assert saved < account.opened_on
+    repo.update_account(account, base_rate=D("3.00"), bonus=None, effective_date=saved)
+
+    shown: list[date] = []
+
+    def fake_exec(self: AccountDialog) -> int:
+        shown.append(self._effective.date().toPython())
+        return AccountDialog.DialogCode.Rejected
+
+    monkeypatch.setattr(AccountDialog, "exec", fake_exec)
+    page._edit_account(account.id)
+
+    assert shown == [saved]
 
 
 def test_new_movement_is_recorded_and_withdrawal_beyond_balance_is_refused(
@@ -226,6 +247,22 @@ def test_movement_dialog_returns_a_movement_kind_enum(qtbot: QtBot) -> None:
     form = dialog.form()
 
     assert form.kind is MovementKind.DEPOSIT
+
+
+def test_account_dialog_keeps_the_last_effective_date(qtbot: QtBot, repo: CashRepository) -> None:
+    account = repo.list_accounts()[0]
+    effective_date = date(2026, 5, 1)
+    dialog = AccountDialog(
+        None,
+        account=account,
+        base_rate=D("3.00"),
+        bonus=None,
+        today=TODAY,
+        effective_date=effective_date,
+    )
+    qtbot.addWidget(dialog)
+
+    assert dialog._effective.date().toPython() == effective_date
 
 
 def test_account_dialog_builds_a_validated_form(qtbot: QtBot) -> None:

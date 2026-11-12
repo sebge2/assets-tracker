@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from datetime import date
+import calendar
+from datetime import date, timedelta
 from decimal import Decimal
 from typing import Any
 
@@ -13,6 +14,9 @@ from assets_tracker.domain.cash import (
     CashMovement,
     InterestFrequency,
     MovementKind,
+    accrued_interest,
+    base_rate_on,
+    bonus_on,
     check_movement_allowed,
     statement,
 )
@@ -91,15 +95,29 @@ class CashRepository:
                 ),
             )
             rates = self.base_rates(account.id)
-            if not rates or rates[-1].rate != base_rate:
-                self._insert_rate(account.id, new_rate)
             bonuses = self.bonuses(account.id)
             current = bonuses[-1] if bonuses else None
             current_pair = (current.rate, current.after_months) if current else (Decimal(0), 0)
-            if current_pair != (new_bonus.rate, new_bonus.after_months) and (
-                current is not None or new_bonus.rate > 0
-            ):
+            bonus_changed = current_pair != (new_bonus.rate, new_bonus.after_months)
+            rate_changed = not rates or rates[-1].rate != base_rate
+            if rate_changed:
+                self._insert_rate(account.id, new_rate)
+            elif not bonus_changed and rates[-1].effective_date != effective_date:
+                # Seule la date change : on corrige la date d'effet courante au lieu d'ajouter
+                # une ligne identique à l'historique.
+                self._move_latest(account.id, "cash_account_rates", effective_date)
+                if current is not None and current.effective_date != effective_date:
+                    self._move_latest(account.id, "cash_account_bonuses", effective_date)
+            if bonus_changed and (current is not None or new_bonus.rate > 0):
                 self._insert_bonus(account.id, new_bonus)
+
+    def _move_latest(self, account_id: int, table: str, effective_date: date) -> None:
+        self._conn.execute(
+            f"UPDATE {table} SET effective_date = ? WHERE id = ("
+            f"SELECT id FROM {table} WHERE account_id = ?"
+            " ORDER BY effective_date DESC, id DESC LIMIT 1)",
+            (effective_date.isoformat(), account_id),
+        )
 
     def delete_account(self, account_id: int) -> None:
         with self._conn:
@@ -120,6 +138,46 @@ class CashRepository:
             "SELECT 1 FROM cash_movements WHERE account_id = ? LIMIT 1", (account_id,)
         ).fetchone()
         return row is not None
+
+    def credit_due_yields(self, today: date) -> None:
+        """Crédite les intérêts et primes dus, sans jamais les dupliquer."""
+        for account in self.list_accounts():
+            assert account.id is not None
+            rates = self.base_rates(account.id)
+            bonuses = self.bonuses(account.id)
+            movements = self.movements(account.id)
+            # Les intérêts courent dès le premier mouvement, même daté avant l'ouverture saisie.
+            since = min([account.opened_on, *(m.movement_date for m in movements)])
+            for payout_date, start, end in _payout_periods(account, today, since):
+                existing = {(m.kind, m.movement_date) for m in movements}
+
+                def base_rate_for_day(day: date, history: list[BaseRateChange] = rates) -> Decimal:
+                    return base_rate_on(history, day)
+
+                def bonus_rate_for_day(
+                    day: date,
+                    opened: date = account.opened_on,
+                    history: list[BonusDefinition] = bonuses,
+                ) -> Decimal:
+                    return bonus_on(opened, history, day)
+
+                base = accrued_interest(movements, start, end, base_rate_for_day)
+                bonus = accrued_interest(
+                    movements,
+                    start,
+                    end,
+                    bonus_rate_for_day,
+                )
+                if base > 0 and (MovementKind.INTEREST, payout_date) not in existing:
+                    movements.append(
+                        self.add_movement(account.id, MovementKind.INTEREST, payout_date, base)
+                    )
+                if bonus > 0 and (MovementKind.LOYALTY_BONUS, payout_date) not in existing:
+                    movements.append(
+                        self.add_movement(
+                            account.id, MovementKind.LOYALTY_BONUS, payout_date, bonus
+                        )
+                    )
 
     # --- Taux et primes -----------------------------------------------------
 
@@ -223,3 +281,37 @@ def _account(row: Any) -> CashAccount:
         payout_month=row["payout_month"],
         payout_day=row["payout_day"],
     )
+
+
+def _payout_periods(
+    account: CashAccount, today: date, since: date
+) -> list[tuple[date, date, date]]:
+    """Dates de crédit échues et périodes d'acquisition associées."""
+    periods: list[tuple[date, date, date]] = []
+    if account.frequency is InterestFrequency.MONTHLY:
+        year, month = since.year, since.month
+        if month == 12:
+            year, month = year + 1, 1
+        else:
+            month += 1
+        while (payout := date(year, month, 1)) <= today:
+            previous_month = payout.month - 1 or 12
+            previous_year = payout.year if payout.month > 1 else payout.year - 1
+            start = max(since, date(previous_year, previous_month, 1))
+            periods.append((payout, start, payout - timedelta(days=1)))
+            year, month = (year + 1, 1) if month == 12 else (year, month + 1)
+        return periods
+
+    assert account.payout_month is not None and account.payout_day is not None
+    for year in range(since.year, today.year + 1):
+        day = min(account.payout_day, calendar.monthrange(year, account.payout_month)[1])
+        payout = date(year, account.payout_month, day)
+        if since <= payout <= today:
+            previous_day = min(
+                account.payout_day,
+                calendar.monthrange(year - 1, account.payout_month)[1],
+            )
+            previous_payout = date(year - 1, account.payout_month, previous_day)
+            start = max(since, previous_payout + timedelta(days=1))
+            periods.append((payout, start, payout))
+    return periods

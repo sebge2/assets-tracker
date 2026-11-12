@@ -76,12 +76,26 @@ def test_changing_the_rate_keeps_the_previous_one(repo: CashRepository) -> None:
     ]
 
 
+def test_changing_only_the_effective_date_moves_the_current_entry(repo: CashRepository) -> None:
+    account = repo.create_account(new_account(), D("1.00"), bonus=(D("1.50"), 12))
+    assert account.id is not None
+
+    repo.update_account(
+        account, base_rate=D("1.00"), bonus=(D("1.50"), 12), effective_date=date(2024, 10, 1)
+    )
+
+    assert [(r.effective_date, r.rate) for r in repo.base_rates(account.id)] == [
+        (date(2024, 10, 1), D("1.00"))
+    ]
+    assert [b.effective_date for b in repo.bonuses(account.id)] == [date(2024, 10, 1)]
+
+
 def test_saving_without_changes_adds_no_history(repo: CashRepository) -> None:
     account = repo.create_account(new_account(), D("1.00"), bonus=(D("1.50"), 12))
     assert account.id is not None
 
     repo.update_account(
-        account, base_rate=D("1.00"), bonus=(D("1.50"), 12), effective_date=date(2026, 1, 1)
+        account, base_rate=D("1.00"), bonus=(D("1.50"), 12), effective_date=date(2024, 6, 1)
     )
 
     assert len(repo.base_rates(account.id)) == 1
@@ -199,6 +213,26 @@ def test_deleting_a_deposit_that_funds_a_withdrawal_is_refused(repo: CashReposit
     assert len(repo.movements(account.id)) == 2
 
 
+def test_due_base_interest_and_loyalty_bonus_are_credited_separately(
+    repo: CashRepository,
+) -> None:
+    account = repo.create_account(
+        new_account(opened_on=date(2026, 1, 1)), D("3.65"), bonus=(D("3.65"), 0)
+    )
+    assert account.id is not None
+    repo.add_movement(account.id, MovementKind.DEPOSIT, date(2026, 1, 1), D("1000"))
+
+    repo.credit_due_yields(date(2026, 2, 1))
+
+    credited = repo.movements(account.id)
+    assert [(m.kind, m.movement_date, m.amount) for m in credited[1:]] == [
+        (MovementKind.INTEREST, date(2026, 2, 1), D("3.10")),
+        (MovementKind.LOYALTY_BONUS, date(2026, 2, 1), D("3.10")),
+    ]
+    repo.credit_due_yields(date(2026, 2, 1))
+    assert repo.movements(account.id) == credited
+
+
 def test_deleting_an_account_removes_its_history(repo: CashRepository, conn: Any) -> None:
     account = repo.create_account(new_account(), D("1.00"), bonus=(D("1.50"), 12))
     assert account.id is not None
@@ -209,3 +243,23 @@ def test_deleting_an_account_removes_its_history(repo: CashRepository, conn: Any
     assert repo.list_accounts() == []
     for table in ("cash_account_rates", "cash_account_bonuses", "cash_movements"):
         assert conn.execute(f"SELECT count(*) AS n FROM {table}").fetchone()["n"] == 0
+
+
+def test_interest_accrues_from_a_movement_dated_before_the_opening(repo: CashRepository) -> None:
+    account = repo.create_account(
+        new_account(
+            opened_on=date(2026, 11, 11),
+            frequency=InterestFrequency.MONTHLY,
+            payout_month=None,
+            payout_day=None,
+        ),
+        D("3.00"),
+    )
+    assert account.id is not None
+    repo.update_account(account, base_rate=D("3.00"), bonus=None, effective_date=date(2026, 10, 1))
+    repo.add_movement(account.id, MovementKind.OPENING, date(2026, 10, 1), D("1000"))
+
+    repo.credit_due_yields(date(2026, 11, 12))
+
+    interest = [m for m in repo.movements(account.id) if m.kind is MovementKind.INTEREST]
+    assert [(m.movement_date, m.amount) for m in interest] == [(date(2026, 11, 1), D("2.55"))]
