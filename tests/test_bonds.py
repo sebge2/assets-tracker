@@ -45,6 +45,12 @@ def bond(
     return BondDetails("État", D(1000), D(rate), frequency, maturity, ValuationSource.YAHOO)
 
 
+def bond_with_nominal(nominal: Decimal) -> BondDetails:
+    return BondDetails(
+        "État", nominal, D(3), CouponFrequency.ANNUAL, date(2031, 5, 25), ValuationSource.YAHOO
+    )
+
+
 def test_unit_value_and_percent_round_trip() -> None:
     assert unit_value(D("101.20"), D(1000)) == D("1012.00")
     assert price_percent(D("1012"), D(1000)) == D("101.2")
@@ -252,3 +258,73 @@ def test_quotes_are_stored_per_bond_and_source_follows(repository: BondRepositor
         repository.record_quote(asset_id, TODAY, D(0), NOW, ValuationSource.MANUAL)
     with pytest.raises(ValueError):
         repository.record_quote(999, TODAY, D(100), NOW, ValuationSource.MANUAL)
+
+
+def test_update_changes_the_terms_and_keeps_the_history(repository: BondRepository) -> None:
+    asset_id = create_oat(repository)
+    repository.add_transaction(asset_id, TransactionType.BUY, TODAY, D(10), D("98.40"), D(0))
+    repository.record_quote(asset_id, TODAY, D("101.20"), NOW, ValuationSource.MANUAL)
+    changed = BondDetails(
+        " Trésor ",
+        D(1000),
+        D("3.125"),
+        CouponFrequency.SEMIANNUAL,
+        date(2032, 5, 25),
+        ValuationSource.YAHOO,  # ignoré : l'origine suit le dernier cours
+    )
+
+    updated = repository.update(asset_id, "OAT corrigée", "fr0000000999", "usd", changed)
+
+    assert (updated.asset.name, updated.asset.symbol) == ("OAT corrigée", "FR0000000999")
+    assert updated.asset.currency == "USD"
+    assert updated.details == BondDetails(
+        "Trésor",
+        D(1000),
+        D("3.125"),
+        CouponFrequency.SEMIANNUAL,
+        date(2032, 5, 25),
+        ValuationSource.MANUAL,
+    )
+    assert updated.position.quantity == D(10) and updated.position.pru == D("984.00")
+    assert updated.valuation is not None and updated.valuation.value == D("1012.00")
+
+
+def test_changing_the_nominal_keeps_the_percentages(repository: BondRepository) -> None:
+    asset_id = create_oat(repository)
+    repository.add_transaction(asset_id, TransactionType.BUY, TODAY, D(10), D("98.40"), D("5"))
+    repository.record_quote(asset_id, date(2026, 11, 1), D("100.50"), NOW, ValuationSource.MANUAL)
+    repository.record_quote(asset_id, TODAY, D("101.20"), NOW, ValuationSource.MANUAL)
+    other = repository.create("Autre", "FR0000000555", "EUR", bond())
+    assert other.asset.id is not None
+    repository.add_transaction(other.asset.id, TransactionType.BUY, TODAY, D(1), D("100"), D(0))
+
+    updated = repository.update(
+        asset_id, "OAT 3,00 % 2031", "FR0000000201", "EUR", bond_with_nominal(D(500))
+    )
+
+    assert updated.details.nominal == D(500)
+    assert updated.position.pru == D("492.00")  # 98,40 % de 500 €
+    assert updated.quote_percent == D("101.2")
+    assert [v.value for v in repository.quote_history(asset_id)] == [D("502.50"), D("506.00")]
+    assert list(updated.accruals.values()) == [D("5")]  # un montant payé ne se recalcule pas
+    untouched = repository.get_holding(other.asset.id)
+    assert untouched is not None and untouched.position.pru == D("1000.00")
+
+
+def test_update_rejects_an_empty_currency(repository: BondRepository) -> None:
+    asset_id = create_oat(repository)
+    with pytest.raises(ValueError):
+        repository.update(asset_id, "OAT", "FR0000000201", " ", bond())
+
+
+def test_update_refuses_an_empty_name_and_a_taken_identifier(repository: BondRepository) -> None:
+    first = create_oat(repository)
+    other = repository.create("Autre", "FR0000000555", "EUR", bond())
+    assert other.asset.id is not None
+    with pytest.raises(ValueError):
+        repository.update(first, " ", "FR0000000201", "EUR", bond())
+    with pytest.raises(ValueError):
+        repository.update(first, "OAT", "FR0000000555", "EUR", bond())
+    repository.update(first, "OAT", "FR0000000201", "EUR", bond())  # son identifiant : accepté
+    with pytest.raises(ValueError):
+        repository.update(999, "OAT", "FR0000000777", "EUR", bond())

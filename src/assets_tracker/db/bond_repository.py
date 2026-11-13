@@ -103,6 +103,70 @@ class BondRepository:
         assert holding is not None
         return holding
 
+    def update(
+        self, asset_id: int, name: str, identifier: str, currency: str, details: BondDetails
+    ) -> BondHolding:
+        """Modifie une obligation, nominal et devise compris.
+
+        Prix des opérations et cours sont stockés en euros par titre (cours % × nominal) : quand le
+        nominal change, ils sont recalculés pour que les cours en % restent identiques. Le
+        changement de devise ne convertit rien (aucun taux de change n'est stocké). L'origine du
+        dernier cours ne change pas.
+        """
+        current = self.get_holding(asset_id)
+        if current is None:
+            raise ValueError("Obligation introuvable.")
+        identifier = validate_identifier(identifier)
+        if not name.strip():
+            raise ValueError("Le nom de l'obligation est obligatoire.")
+        if not currency.strip():
+            raise ValueError("La devise est obligatoire.")
+        factor = details.nominal / current.details.nominal
+        with self._conn:
+            if self._conn.execute(
+                "SELECT 1 FROM assets WHERE symbol = ? AND id <> ?", (identifier, asset_id)
+            ).fetchone():
+                raise ValueError("Cet identifiant est déjà utilisé.")
+            self._conn.execute(
+                "UPDATE assets SET symbol = ?, name = ?, currency = ? WHERE id = ?",
+                (identifier, name.strip(), currency.strip().upper(), asset_id),
+            )
+            self._conn.execute(
+                "UPDATE bond_details SET issuer = ?, nominal = ?, coupon_rate = ?, "
+                "frequency = ?, maturity = ? WHERE asset_id = ?",
+                (
+                    details.issuer.strip() or None,
+                    str(details.nominal),
+                    str(details.coupon_rate),
+                    details.frequency.value,
+                    details.maturity.isoformat(),
+                    asset_id,
+                ),
+            )
+            if factor != 1:
+                self._rescale(asset_id, factor)
+        holding = self.get_holding(asset_id)
+        assert holding is not None
+        return holding
+
+    def _rescale(self, asset_id: int, factor: Decimal) -> None:
+        """Multiplie les montants par titre stockés (prix des opérations, cours)."""
+        for table, key, extra, params in (
+            ("transactions", "id", "", ()),
+            ("valuations", "valuation_date", " AND asset_type = 'BOND'", ()),
+        ):
+            column = "unit_price" if table == "transactions" else "value"
+            id_column = "asset_id"
+            rows = self._conn.execute(
+                f"SELECT {key} AS k, {column} AS v FROM {table} WHERE {id_column} = ?{extra}",
+                (asset_id, *params),
+            ).fetchall()
+            for row in rows:
+                self._conn.execute(
+                    f"UPDATE {table} SET {column} = ? WHERE {id_column} = ? AND {key} = ?{extra}",
+                    (str(Decimal(row["v"]) * factor), asset_id, row["k"]),
+                )
+
     def add_transaction(
         self,
         asset_id: int,

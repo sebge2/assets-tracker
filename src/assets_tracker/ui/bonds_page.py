@@ -8,7 +8,7 @@ from datetime import date, datetime, timedelta
 from decimal import Decimal
 from html import escape
 
-from PySide6.QtCore import QObject, QRectF, QRunnable, Qt, QThreadPool, Signal
+from PySide6.QtCore import QDate, QObject, QRectF, QRunnable, Qt, QThreadPool, Signal
 from PySide6.QtGui import QColor, QPainter, QPaintEvent, QResizeEvent
 from PySide6.QtWidgets import (
     QAbstractItemView,
@@ -279,12 +279,41 @@ class LadderChart(QWidget):
 # --- Dialogues --------------------------------------------------------------
 
 
-class BondDialog(QDialog):
+class _ValidatedDialog(QDialog):
+    """Reste ouvert tant que la saisie est invalide : l'erreur s'affiche dans la fenêtre."""
+
+    def __init__(self, parent: QWidget | None) -> None:
+        super().__init__(parent)
+        self._error = QLabel()
+        self._error.setProperty("role", "error")
+        self._error.setWordWrap(True)
+
+    def validate(self) -> None:
+        """Lève `ValueError` si la saisie est invalide."""
+        raise NotImplementedError
+
+    def show_error(self, message: str) -> None:
+        self._error.setText(message)
+
+    def accept(self) -> None:
+        try:
+            self.validate()
+        except ValueError as error:
+            self.show_error(str(error))
+            return
+        self._error.setText("")
+        super().accept()
+
+
+class BondDialog(_ValidatedDialog):
     """Nouvelle obligation : le cours est demandé à Yahoo, saisi à la main s'il est absent."""
 
-    def __init__(self, parent: QWidget | None, today: date) -> None:
+    def __init__(
+        self, parent: QWidget | None, today: date, holding: BondHolding | None = None
+    ) -> None:
         super().__init__(parent)
-        self.setWindowTitle("Nouvelle obligation")
+        self._source = holding.details.valuation_source if holding else ValuationSource.YAHOO
+        self.setWindowTitle("Modifier l'obligation" if holding else "Nouvelle obligation")
         self.setMinimumWidth(560)
         self._name, self._identifier = QLineEdit(), QLineEdit()
         self._issuer, self._currency = QLineEdit(), QLineEdit("EUR")
@@ -302,7 +331,7 @@ class BondDialog(QDialog):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(28, 28, 28, 28)
         layout.setSpacing(16)
-        title = QLabel("Nouvelle obligation")
+        title = QLabel("Modifier l'obligation" if holding else "Nouvelle obligation")
         title.setProperty("role", "title")
         title.setStyleSheet("font-size: 20px;")
         layout.addWidget(title)
@@ -327,7 +356,36 @@ class BondDialog(QDialog):
         )
         layout.addWidget(labeled("Date d'échéance", self._maturity))
         layout.addWidget(hint)
-        layout.addWidget(_buttons(self, "Ajouter l'obligation"))
+        layout.addWidget(self._error)
+        layout.addWidget(_buttons(self, "Enregistrer" if holding else "Ajouter l'obligation"))
+        if holding is not None:
+            self._load(holding)
+
+    def _load(self, holding: BondHolding) -> None:
+        """Préremplit la saisie avec l'obligation à modifier."""
+        details = holding.details
+        self._name.setText(holding.asset.name)
+        self._identifier.setText(holding.asset.symbol)
+        self._issuer.setText(details.issuer)
+        self._currency.setText(holding.asset.currency)
+        self._nominal.setText(format_quantity(details.nominal))
+        self._rate.setText(format_quantity(details.coupon_rate))
+        self._frequency.setCurrentIndex(self._frequency.findData(details.frequency))
+        self._maturity.setDate(
+            QDate(details.maturity.year, details.maturity.month, details.maturity.day)
+        )
+        hint = QLabel(
+            "Si vous changez le nominal, les cours en % sont conservés et les montants en euros "
+            "de vos opérations sont recalculés. Changer la devise ne convertit rien."
+        )
+        hint.setProperty("role", "hint")
+        hint.setWordWrap(True)
+        layout = self.layout()
+        assert isinstance(layout, QVBoxLayout)
+        layout.insertWidget(layout.count() - 3, hint)
+
+    def validate(self) -> None:
+        self.form()
 
     def form(self) -> tuple[str, str, str, BondDetails]:
         return (
@@ -340,12 +398,12 @@ class BondDialog(QDialog):
                 parse_decimal(self._rate.text(), "Taux du coupon"),
                 CouponFrequency(self._frequency.currentData()),
                 to_date(self._maturity),
-                ValuationSource.YAHOO,
+                self._source,
             ),
         )
 
 
-class QuoteDialog(QDialog):
+class QuoteDialog(_ValidatedDialog):
     """Saisie manuelle du cours (en % du nominal), sans passer par une opération."""
 
     def __init__(self, parent: QWidget | None, holding: BondHolding, today: date) -> None:
@@ -371,7 +429,11 @@ class QuoteDialog(QDialog):
         layout.addWidget(
             row(labeled("Cours (% du nominal)", self._price, hint), labeled("Date", self._date))
         )
+        layout.addWidget(self._error)
         layout.addWidget(_buttons(self, "Enregistrer"))
+
+    def validate(self) -> None:
+        self.form()
 
     def form(self) -> tuple[date, Decimal]:
         price = parse_decimal(self._price.text(), "Cours")
@@ -879,6 +941,9 @@ class BondsPage(QWidget):
         trades.addWidget(self._sell_button, 1)
         layout.addLayout(trades)
         layout.addWidget(self._quote_button)
+        self._edit_button = QPushButton("Modifier l'obligation…")
+        self._edit_button.clicked.connect(lambda _=False: self._edit_bond(self._selected_view()))
+        layout.addWidget(self._edit_button)
 
         operations_caption = QLabel("DERNIÈRES OPÉRATIONS")
         operations_caption.setProperty("role", "caption")
@@ -1228,16 +1293,33 @@ class BondsPage(QWidget):
 
     def _new_bond(self) -> None:
         dialog = BondDialog(self, self._today())
-        if dialog.exec() != QDialog.DialogCode.Accepted:
-            return
-        try:
-            name, identifier, currency, details = dialog.form()
-            created = self._repository.create(name, identifier, currency, details)
+        # La fenêtre reste ouverte (saisie conservée) tant que l'obligation est refusée.
+        while dialog.exec() == QDialog.DialogCode.Accepted:
+            try:
+                name, identifier, currency, details = dialog.form()
+                created = self._repository.create(name, identifier, currency, details)
+            except ValueError as error:
+                dialog.show_error(str(error))
+                continue
             self._selected = created.asset.id
-        except ValueError as error:
-            QMessageBox.warning(self, "Obligation invalide", str(error))
+            break
         self.refresh()
         self.refresh_quotes()
+
+    def _edit_bond(self, view: BondView | None) -> None:
+        if view is None:
+            return
+        dialog = BondDialog(self, self._today(), view.holding)
+        while dialog.exec() == QDialog.DialogCode.Accepted:
+            try:
+                name, identifier, currency, details = dialog.form()
+                self._repository.update(view.asset_id, name, identifier, currency, details)
+            except ValueError as error:
+                dialog.show_error(str(error))
+                continue
+            break
+        self._selected = view.asset_id
+        self.refresh()
 
     def _trade(self, kind: TransactionType) -> None:
         view = self._selected_view()
@@ -1263,15 +1345,16 @@ class BondsPage(QWidget):
         if view is None:
             return
         dialog = QuoteDialog(self, view.holding, self._today())
-        if dialog.exec() != QDialog.DialogCode.Accepted:
-            return
-        try:
-            when, price = dialog.form()
-            self._repository.record_quote(
-                view.asset_id, when, price, self._now(), ValuationSource.MANUAL
-            )
-        except ValueError as error:
-            QMessageBox.warning(self, "Cours invalide", str(error))
+        while dialog.exec() == QDialog.DialogCode.Accepted:
+            try:
+                when, price = dialog.form()
+                self._repository.record_quote(
+                    view.asset_id, when, price, self._now(), ValuationSource.MANUAL
+                )
+            except ValueError as error:
+                dialog.show_error(str(error))
+                continue
+            break
         self._failed.discard(view.asset_id)
         self._selected = view.asset_id
         self.refresh()

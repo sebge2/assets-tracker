@@ -381,6 +381,149 @@ def test_new_bond_flow_adds_a_row(
     assert len(repository.list_holdings()) == 3
 
 
+def test_bond_dialog_stays_open_on_invalid_input_and_shows_the_error(qtbot: QtBot) -> None:
+    dialog = BondDialog(None, TODAY)
+    qtbot.addWidget(dialog)
+    dialog._name.setText("Bund 2,40 % 2033")
+    dialog._identifier.setText("DE0000000203")
+
+    dialog.accept()  # le taux du coupon manque
+
+    assert dialog.result() != QDialog.DialogCode.Accepted
+    assert "Taux du coupon" in dialog._error.text()
+
+    dialog._rate.setText("2,4")
+    dialog.accept()
+
+    assert dialog.result() == QDialog.DialogCode.Accepted
+    assert dialog._error.text() == ""
+
+
+def test_new_bond_keeps_the_dialog_and_its_input_after_a_refused_bond(
+    page: BondsPage, repository: BondRepository, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    opened: list[str] = []
+
+    def fill(self: BondDialog) -> QDialog.DialogCode:
+        if not opened:  # 1re ouverture : l'identifiant existe déjà
+            self._name.setText("Bund 2,40 % 2033")
+            self._identifier.setText(OAT)
+            self._rate.setText("2,4")
+            self._maturity.setDate(QDate(2033, 2, 15))
+        else:  # la même fenêtre revient avec la saisie : on corrige l'identifiant
+            assert self._name.text() == "Bund 2,40 % 2033"
+            assert "déjà utilisé" in self._error.text()
+            self._identifier.setText("DE0000000203")
+        opened.append(self._identifier.text())
+        return QDialog.DialogCode.Accepted
+
+    monkeypatch.setattr(BondDialog, "exec", fill)
+
+    page._new_bond()
+
+    assert opened == [OAT, "DE0000000203"]
+    assert len(repository.list_holdings()) == 3
+    assert page._d_name.text() == "Bund 2,40 % 2033"
+
+
+def test_quote_dialog_stays_open_on_an_invalid_quote(qtbot: QtBot, page: BondsPage) -> None:
+    view = page._selected_view()
+    assert view is not None
+    dialog = QuoteDialog(None, view.holding, TODAY)
+    qtbot.addWidget(dialog)
+
+    dialog.accept()
+    assert dialog.result() != QDialog.DialogCode.Accepted
+    assert "Cours" in dialog._error.text()
+
+    dialog._price.setText("99,5")
+    dialog.accept()
+    assert dialog.result() == QDialog.DialogCode.Accepted
+
+
+def test_edit_dialog_is_prefilled_with_every_field_editable(qtbot: QtBot, page: BondsPage) -> None:
+    view = page._selected_view()  # l'obligation corporate : 4,5 % semestriel
+    assert view is not None
+    dialog = BondDialog(None, TODAY, view.holding)
+    qtbot.addWidget(dialog)
+
+    assert dialog.windowTitle() == "Modifier l'obligation"
+    assert dialog._name.text() == "Obligation Corporate Alpha 4,50 % 2029"
+    assert dialog._identifier.text() == CORPORATE
+    assert dialog._frequency.currentData() is CouponFrequency.SEMIANNUAL
+    assert dialog._nominal.isEnabled() and dialog._currency.isEnabled()
+    _, _, currency, details = dialog.form()
+    assert currency == "EUR"
+    assert details == view.holding.details
+
+
+def test_edit_can_change_the_nominal_and_currency(
+    page: BondsPage, repository: BondRepository, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def fill(self: BondDialog) -> QDialog.DialogCode:
+        self._nominal.setText("500")
+        self._currency.setText("usd")
+        return QDialog.DialogCode.Accepted
+
+    monkeypatch.setattr(BondDialog, "exec", fill)
+
+    page._edit_bond(page._selected_view())
+
+    corporate = repository.list_holdings()[0]
+    assert (corporate.details.nominal, corporate.asset.currency) == (D(500), "USD")
+    assert corporate.quote_percent == D("99.1")  # le cours en % ne change pas
+    assert page._tiles["PRU"].text() == f"100,50{NBSP}%"
+    assert page._tiles["Nominal"].text() == f"500,00{NBSP}$"
+
+
+def test_edit_flow_updates_the_bond_and_refreshes_the_page(
+    page: BondsPage, repository: BondRepository, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def fill(self: BondDialog) -> QDialog.DialogCode:
+        self._name.setText("Alpha 5 % 2030")
+        self._rate.setText("5")
+        self._maturity.setDate(QDate(2030, 9, 12))
+        return QDialog.DialogCode.Accepted
+
+    monkeypatch.setattr(BondDialog, "exec", fill)
+
+    page._edit_bond(page._selected_view())
+
+    corporate = repository.list_holdings()[0]
+    assert corporate.asset.name == "Alpha 5 % 2030"
+    assert corporate.details.maturity == date(2030, 9, 12)
+    assert page._d_name.text() == "Alpha 5 % 2030"
+    assert page._tiles["Coupon"].text() == f"5,00{NBSP}% · semestriel"
+    assert page._tiles["Échéance"].text() == "12/09/2030"
+    assert corporate.position.quantity == D(8)  # les opérations ne bougent pas
+
+
+def test_edit_keeps_the_dialog_open_when_the_identifier_is_taken(
+    page: BondsPage, repository: BondRepository, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    opened: list[str] = []
+
+    def fill(self: BondDialog) -> QDialog.DialogCode:
+        if not opened:
+            self._identifier.setText(OAT)  # déjà celui de l'OAT
+        else:
+            assert "déjà utilisé" in self._error.text()
+            self._identifier.setText("XS0000000999")
+        opened.append(self._identifier.text())
+        return QDialog.DialogCode.Accepted
+
+    monkeypatch.setattr(BondDialog, "exec", fill)
+
+    page._edit_bond(page._selected_view())
+
+    assert opened == [OAT, "XS0000000999"]
+    assert repository.list_holdings()[0].asset.symbol == "XS0000000999"
+
+
+def test_detail_has_an_edit_button(page: BondsPage) -> None:
+    assert page._edit_button.text() == "Modifier l'obligation…"
+
+
 # --- achat et vente ---------------------------------------------------------
 
 
