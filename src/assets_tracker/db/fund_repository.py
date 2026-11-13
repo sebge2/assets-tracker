@@ -99,6 +99,10 @@ class FundRepository:
             raise ValueError("La valeur liquidative doit être strictement positive.")
         self._valuations.record(InstrumentType.FUND, asset_id, when, value, now)
 
+    def nav_history(self, asset_id: int) -> list[Valuation]:
+        """VL enregistrées, de la plus ancienne à la plus récente."""
+        return self._valuations.history(InstrumentType.FUND, asset_id)
+
     def transactions(self, asset_id: int) -> list[Transaction]:
         rows = self._conn.execute(
             "SELECT * FROM transactions WHERE asset_id = ? ORDER BY trade_date, id", (asset_id,)
