@@ -18,6 +18,7 @@ _PATHS = {
     "delete": '<path d="M4 7h16M10 11v5M14 11v5M9 7l1-3h4l1 3M6 7l1 13h10l1-13"/>',
     "back": '<path d="M19 12H5M11 6l-6 6 6 6"/>',
     "add": '<path d="M12 5v14M5 12h14"/>',
+    "commodities": '<path d="M3 18l3-8h12l3 8zM9 10l1-4h4l1 4"/>',
     "simulation": (
         '<path d="M3 6h11M18 6h3M3 12h5M12 12h9M3 18h13M20 18h1"/>'
         '<circle cx="16" cy="6" r="2"/><circle cx="10" cy="12" r="2"/>'

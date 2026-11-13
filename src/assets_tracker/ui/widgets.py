@@ -58,7 +58,8 @@ def fit_height(table: QTableWidget, max_height: int | None = None) -> None:
 
     Avec `max_height`, le tableau est plafonné et défile en interne au-delà.
     """
-    height = table.horizontalHeader().height() + sum(
+    header = table.horizontalHeader()
+    height = max(header.height(), header.sizeHint().height()) + sum(
         table.rowHeight(row) for row in range(table.rowCount())
     )
     height = max(height + 4, 120)

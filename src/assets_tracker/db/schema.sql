@@ -69,3 +69,18 @@ CREATE INDEX IF NOT EXISTS idx_cash_rates_account ON cash_account_rates(account_
 CREATE INDEX IF NOT EXISTS idx_cash_bonuses_account
     ON cash_account_bonuses(account_id, effective_date);
 CREATE INDEX IF NOT EXISTS idx_cash_movements_account ON cash_movements(account_id, movement_date);
+
+-- Matières premières : ajout additif. Un actif est une matière première s'il a une ligne ici ;
+-- ses achats et ventes sont des lignes ordinaires de `transactions` (BUY/SELL), son dernier
+-- cours (dans l'unité de détention, en euros) une ligne de `prices`.
+CREATE TABLE IF NOT EXISTS commodity_details (
+    asset_id       INTEGER PRIMARY KEY REFERENCES assets(id) ON DELETE CASCADE,
+    family         TEXT NOT NULL CHECK (family IN ('PRECIOUS', 'ENERGY', 'INDUSTRIAL', 'AGRICULTURAL')),
+    form           TEXT NOT NULL CHECK (form IN ('PHYSICAL', 'ETC')),
+    unit           TEXT NOT NULL,           -- g, kg, oz ou parts
+    purity         TEXT,                    -- inutilisée (champ retiré de l'UI), conservée sans migration
+    broker         TEXT,                    -- ETC : courtier ou compte-titres
+    quote_symbol   TEXT,                    -- ticker du cours, NULL = pas de cours automatique
+    quote_currency TEXT NOT NULL DEFAULT 'EUR',
+    quote_unit     TEXT                     -- unité du cours (oz), NULL = unité de détention
+);

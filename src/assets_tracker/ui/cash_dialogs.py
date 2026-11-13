@@ -7,13 +7,12 @@ from dataclasses import dataclass
 from datetime import date
 from decimal import Decimal
 
-from PySide6.QtCore import QDate, Qt, QTimer
+from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QShowEvent
 from PySide6.QtWidgets import (
     QButtonGroup,
     QCheckBox,
     QComboBox,
-    QDateEdit,
     QDialog,
     QDialogButtonBox,
     QHBoxLayout,
@@ -37,6 +36,11 @@ from assets_tracker.domain.cash import (
     format_iban,
     normalize_iban,
 )
+from assets_tracker.ui.form_helpers import date_edit as _date_edit
+from assets_tracker.ui.form_helpers import labeled as _labeled
+from assets_tracker.ui.form_helpers import row as _row
+from assets_tracker.ui.form_helpers import section as _section
+from assets_tracker.ui.form_helpers import to_date as _to_date
 from assets_tracker.ui.formatting import MONTHS_FR, format_number, parse_decimal
 
 
@@ -53,51 +57,6 @@ class MovementForm:
     kind: MovementKind
     movement_date: date
     amount: Decimal
-
-
-def _labeled(text: str, widget: QWidget, hint: str | None = None) -> QWidget:
-    box = QWidget()
-    layout = QVBoxLayout(box)
-    layout.setContentsMargins(0, 0, 0, 0)
-    layout.setSpacing(6)
-    label = QLabel(text)
-    label.setProperty("role", "muted")
-    layout.addWidget(label)
-    layout.addWidget(widget)
-    if hint:
-        note = QLabel(hint)
-        note.setProperty("role", "hint")
-        note.setWordWrap(True)
-        layout.addWidget(note)
-    return box
-
-
-def _row(*widgets: QWidget) -> QWidget:
-    box = QWidget()
-    layout = QHBoxLayout(box)
-    layout.setContentsMargins(0, 0, 0, 0)
-    layout.setSpacing(12)
-    for widget in widgets:
-        layout.addWidget(widget, 1, Qt.AlignmentFlag.AlignTop)
-    return box
-
-
-def _section(title: str) -> QLabel:
-    label = QLabel(title.upper())
-    label.setProperty("role", "caption")
-    return label
-
-
-def _date_edit(value: date) -> QDateEdit:
-    edit = QDateEdit(QDate(value.year, value.month, value.day))
-    edit.setCalendarPopup(True)
-    edit.setDisplayFormat("yyyy-MM-dd")
-    return edit
-
-
-def _to_date(edit: QDateEdit) -> date:
-    qdate = edit.date()
-    return date(qdate.year(), qdate.month(), qdate.day())
 
 
 class AccountDialog(QDialog):

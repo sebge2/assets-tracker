@@ -17,8 +17,10 @@ from PySide6.QtWidgets import (
 )
 
 from assets_tracker.db.cash_repository import CashRepository
+from assets_tracker.db.commodity_repository import CommodityRepository
 from assets_tracker.ui import icons, theme
 from assets_tracker.ui.cash_page import CashPage
+from assets_tracker.ui.commodities_page import CommoditiesPage
 from assets_tracker.ui.projection_page import ProjectionPage
 
 
@@ -35,8 +37,10 @@ class MainWindow(QMainWindow):
         cash_repository = CashRepository(database)
         self.cash_page = CashPage(cash_repository)
         self._stack.addWidget(self._portfolio)
+        self.commodities_page = CommoditiesPage(CommodityRepository(database))
         self.projection_page = ProjectionPage()
         self._stack.addWidget(self.cash_page)
+        self._stack.addWidget(self.commodities_page)
         self._stack.addWidget(self.projection_page)
 
         root = QWidget()
@@ -76,6 +80,7 @@ class MainWindow(QMainWindow):
             (
                 ("Portefeuille", "dashboard"),
                 ("Comptes cash", "cash"),
+                ("Matières premières", "commodities"),
                 ("Simulation", "simulation"),
             )
         ):
@@ -102,3 +107,5 @@ class MainWindow(QMainWindow):
         self._stack.setCurrentIndex(index)
         if index == 1:
             self.cash_page.show_list()
+        elif index == 2:
+            self.commodities_page.refresh()

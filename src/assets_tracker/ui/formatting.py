@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, datetime
 from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 
 from assets_tracker.domain.cash import CashAccount, InterestFrequency
+from assets_tracker.domain.commodities import CommodityFamily
 
 NBSP = " "
 NNBSP = " "
@@ -105,3 +106,40 @@ def month_label(month: date, *, short: bool = False) -> str:
     """`novembre 2026` (ou `nov. 2026` en abrégé)."""
     names = _MONTHS_SHORT if short else MONTHS_FR
     return f"{names[month.month - 1]} {month.year}"
+
+
+FAMILY_LABELS = {
+    CommodityFamily.PRECIOUS: "Métaux précieux",
+    CommodityFamily.ENERGY: "Énergie",
+    CommodityFamily.INDUSTRIAL: "Métaux industriels",
+    CommodityFamily.AGRICULTURAL: "Agricole",
+}
+
+
+def format_quantity(value: Decimal, max_places: int = 4) -> str:
+    """Quantité sans zéros inutiles : `100`, `0,5`, `1 250,25`."""
+    quantized = value.quantize(Decimal(1).scaleb(-max_places), rounding=ROUND_HALF_UP)
+    text = f"{abs(quantized):f}"
+    if "." in text:
+        text = text.rstrip("0").rstrip(".")
+    integer, _, fraction = text.partition(".")
+    grouped = f"{int(integer):,}".replace(",", NNBSP)
+    sign = MINUS if quantized < 0 else ""
+    return f"{sign}{grouped},{fraction}" if fraction else f"{sign}{grouped}"
+
+
+def short_datetime(moment: datetime) -> str:
+    """`12 nov. 21:03`."""
+    return f"{moment.day} {_MONTHS_SHORT[moment.month - 1]} {moment:%H:%M}"
+
+
+def relative_age(delta_seconds: float) -> str:
+    """Ancienneté d'un cours : `À l'instant`, `Il y a 4 min`, `Il y a 3 h`, `Il y a 2 j`."""
+    minutes = int(delta_seconds // 60)
+    if minutes < 1:
+        return "À l'instant"
+    if minutes < 60:
+        return f"Il y a {minutes} min"
+    if minutes < 24 * 60:
+        return f"Il y a {minutes // 60} h"
+    return f"Il y a {minutes // (24 * 60)} j"
