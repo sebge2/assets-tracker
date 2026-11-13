@@ -26,6 +26,17 @@ LOSS = "#FF7A8A"
 WARNING = "#F5B84B"
 
 # Couleurs de séries (un compte = une couleur), distinctes du vert gain / rouge perte.
+# Couleur de chaque type d'actif (clé = valeur de `InstrumentType`), reprise dans les mocks.
+ASSET_COLORS = {
+    "STOCK": "#7C8CFF",
+    "FUND": "#B38CFF",
+    "COMMODITY": "#FF9F7A",
+    "CASH": "#4FD1C5",
+    "BOND": "#5CC8FF",
+    "CRYPTO": "#F5B84B",
+    "TERM_NOTE": "#8590A6",
+}
+
 SERIES = ("#5CC8FF", "#B38CFF", "#FF9F7A", "#4FD1C5", "#F5B84B", "#7C8CFF")
 
 ALT_ROW = "#151922"

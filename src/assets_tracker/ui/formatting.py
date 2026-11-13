@@ -7,6 +7,7 @@ from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 
 from assets_tracker.domain.cash import CashAccount, InterestFrequency
 from assets_tracker.domain.commodities import CommodityFamily
+from assets_tracker.domain.models import InstrumentType
 
 NBSP = " "
 NNBSP = " "
@@ -143,3 +144,14 @@ def relative_age(delta_seconds: float) -> str:
     if minutes < 24 * 60:
         return f"Il y a {minutes // 60} h"
     return f"Il y a {minutes // (24 * 60)} j"
+
+
+ASSET_LABELS = {
+    InstrumentType.STOCK: "Actions",
+    InstrumentType.FUND: "Fonds et ETF",
+    InstrumentType.COMMODITY: "Matières premières",
+    InstrumentType.CASH: "Cash",
+    InstrumentType.BOND: "Obligations",
+    InstrumentType.CRYPTO: "Crypto",
+    InstrumentType.TERM_NOTE: "Bons de caisse",
+}

@@ -11,7 +11,6 @@ from PySide6.QtWidgets import (
     QMainWindow,
     QPushButton,
     QStackedWidget,
-    QTableWidget,
     QVBoxLayout,
     QWidget,
 )
@@ -21,23 +20,23 @@ from assets_tracker.db.commodity_repository import CommodityRepository
 from assets_tracker.ui import icons, theme
 from assets_tracker.ui.cash_page import CashPage
 from assets_tracker.ui.commodities_page import CommoditiesPage
+from assets_tracker.ui.portfolio_page import PortfolioPage
 from assets_tracker.ui.projection_page import ProjectionPage
 
 
 class MainWindow(QMainWindow):
-    COLUMNS = ("Actif", "Quantité", "PRU", "Cours", "Valeur", "+/- value")
-
     def __init__(self, database: Any) -> None:
         super().__init__()
         self.setWindowTitle("Assets Tracker")
         self.resize(1360, 820)
 
         self._stack = QStackedWidget()
-        self._portfolio = self._build_portfolio_page()
         cash_repository = CashRepository(database)
+        commodity_repository = CommodityRepository(database)
+        self.portfolio_page = PortfolioPage(cash_repository, commodity_repository)
         self.cash_page = CashPage(cash_repository)
-        self._stack.addWidget(self._portfolio)
-        self.commodities_page = CommoditiesPage(CommodityRepository(database))
+        self._stack.addWidget(self.portfolio_page)
+        self.commodities_page = CommoditiesPage(commodity_repository)
         self.projection_page = ProjectionPage()
         self._stack.addWidget(self.cash_page)
         self._stack.addWidget(self.commodities_page)
@@ -97,15 +96,12 @@ class MainWindow(QMainWindow):
         layout.addStretch(1)
         return sidebar
 
-    def _build_portfolio_page(self) -> QWidget:
-        table = QTableWidget(0, len(self.COLUMNS))
-        table.setHorizontalHeaderLabels(list(self.COLUMNS))
-        return table
-
     def _navigate(self, index: int) -> None:
         self._nav_buttons[index].setChecked(True)
         self._stack.setCurrentIndex(index)
-        if index == 1:
+        if index == 0:
+            self.portfolio_page.refresh()
+        elif index == 1:
             self.cash_page.show_list()
         elif index == 2:
             self.commodities_page.refresh()
