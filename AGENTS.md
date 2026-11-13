@@ -17,6 +17,7 @@ Python ≥ 3.11. Gestion des dépendances dans `pyproject.toml` (extra `dev`).
 ## Périmètre V1
 
 - **Instruments** : création, modification et suivi, par type : `STOCK` (action), `BOND` (obligation), `FUND` (fonds), `CRYPTO`, `CASH`, `TERM_NOTE` (bon de caisse).
+- **Fonds** : les ETF restent dans les actions. Un fonds (`FUND`) porte uniquement son nom, son identifiant ISIN ou ticker, son courtier/enveloppe libre, sa devise, son TER informatif et l'origine de sa VL (Yahoo ou manuelle). Pas de type, classe d'actifs, société de gestion, SCPI ou OPCVM dans la V1. Les souscriptions et rachats utilisent les transactions génériques (`BUY`/`SELL`) ; les frais saisis en pourcentage sont convertis en montant pour le PRU. Une VL manuelle est conservée dans `valuations` avec `asset_type=FUND`.
 - **Transactions** : les opérations et les champs saisis dépendent du type d'instrument (voir « Opérations par instrument »). Saisie via un assistant (wizard) en 4 étapes : instrument, opération, détails, récapitulatif.
 - **Comptes cash** : gestion de comptes (nom, banque, IBAN, devise) avec taux d'intérêt, historique des taux, prime de fidélité et fréquence de versement (voir « Comptes cash »). Tout dépôt/retrait est rattaché à un compte.
 - **Matières premières** : métaux précieux, énergie, métaux industriels, agricole, détenus en physique (lingots, pièces) ou via des ETC/ETF ; achat, vente, modification, cours en euros (voir « Matières premières »).

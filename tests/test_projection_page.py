@@ -97,9 +97,9 @@ def test_main_window_navigates_to_the_projection_page(qtbot: QtBot, conn: Any) -
     window.show()
 
     labels = [button.text() for button in window._nav_buttons]
-    assert labels == ["Portefeuille", "Comptes cash", "Matières premières", "Simulation"]
+    assert labels == ["Portefeuille", "Comptes cash", "Matières premières", "Fonds", "Simulation"]
 
-    qtbot.mouseClick(window._nav_buttons[3], Qt.MouseButton.LeftButton)
+    qtbot.mouseClick(window._nav_buttons[4], Qt.MouseButton.LeftButton)
 
     assert window._stack.currentWidget() is window.projection_page
-    assert window._nav_buttons[3].isChecked()
+    assert window._nav_buttons[4].isChecked()

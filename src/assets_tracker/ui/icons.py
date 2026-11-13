@@ -14,6 +14,7 @@ _PATHS = {
         '<rect x="14" y="12" width="7" height="9"/><rect x="3" y="16" width="7" height="5"/>'
     ),
     "cash": '<rect x="2" y="6" width="20" height="13" rx="2"/><path d="M2 10h20M6 15h4"/>',
+    "fund": '<path d="M4 19V9m6 10V5m6 14v-7M3 21h18"/>',
     "edit": '<path d="M4 20h4L19 9l-4-4L4 16zM13.5 6.5l4 4"/>',
     "delete": '<path d="M4 7h16M10 11v5M14 11v5M9 7l1-3h4l1 3M6 7l1 13h10l1-13"/>',
     "back": '<path d="M19 12H5M11 6l-6 6 6 6"/>',

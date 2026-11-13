@@ -99,3 +99,12 @@ CREATE TABLE IF NOT EXISTS valuations (
 );
 
 CREATE INDEX IF NOT EXISTS idx_valuations_asset ON valuations(asset_id, valuation_date);
+
+-- Fonds hors ETF : souscriptions/rachats dans `transactions`, VL dans `valuations`.
+CREATE TABLE IF NOT EXISTS fund_details (
+    asset_id         INTEGER PRIMARY KEY REFERENCES assets(id) ON DELETE CASCADE,
+    broker           TEXT,
+    ter              TEXT,
+    valuation_source TEXT NOT NULL CHECK (valuation_source IN ('YAHOO', 'MANUAL')),
+    quote_symbol     TEXT
+);
