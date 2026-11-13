@@ -202,7 +202,7 @@ def test_empty_state(qtbot: QtBot, conn: Any) -> None:
 def test_refresh_stores_new_prices_and_keeps_cache_on_failure(
     page: CommoditiesPage, repo: CommodityRepository, quotes: Quotes
 ) -> None:
-    page.refresh_prices()
+    page.refresh_prices(force=True)
 
     assert sorted(quotes.calls) == ["CL=F", "GC=F"]
     gold, oil = repo.list_holdings()
@@ -224,7 +224,7 @@ def test_provider_exception_never_breaks_the_page(qtbot: QtBot, repo: CommodityR
     )
     qtbot.addWidget(widget)
 
-    widget.refresh_prices()
+    widget.refresh_prices(force=True)
 
     assert widget._table.rowCount() == 2
     assert len(widget._failed) == 2
@@ -246,11 +246,83 @@ def test_background_refresh_updates_the_page(
     )
     qtbot.addWidget(widget)
 
-    widget.refresh_prices()
+    widget.refresh_prices(force=True)
     qtbot.waitUntil(lambda: not widget._refreshing, timeout=3000)
 
     assert repo.list_holdings()[0].price is not None
     assert repo.list_holdings()[0].price.price == D("72.00")  # type: ignore[union-attr]
+
+
+# --- Cache quotidien et historique -------------------------------------------
+
+
+def test_automatic_refresh_only_asks_for_assets_not_valued_today(
+    page: CommoditiesPage, quotes: Quotes
+) -> None:
+    page.refresh_prices()  # l'or est déjà valorisé aujourd'hui : seul le pétrole est interrogé
+
+    assert quotes.calls == ["CL=F"]
+
+
+def test_a_successful_valuation_is_not_asked_again_the_same_day(
+    page: CommoditiesPage, quotes: Quotes
+) -> None:
+    quotes.prices["CL=F"] = D("30.10")
+
+    page.refresh_prices()
+    page.refresh_prices()
+    page.refresh_prices()
+
+    assert quotes.calls == ["CL=F"]  # une seule fois, les appels suivants lisent le cache
+    assert "Cache" not in page._table.cellWidget(1, 3).text()  # le pétrole est maintenant du jour
+
+
+def test_a_failed_valuation_is_retried_at_the_next_pass(
+    page: CommoditiesPage, quotes: Quotes
+) -> None:
+    page.refresh_prices()  # le pétrole échoue (aucun cours)
+    page.refresh_prices()
+
+    assert quotes.calls == ["CL=F", "CL=F"]
+
+
+def test_the_refresh_button_forces_a_new_valuation(
+    qtbot: QtBot, page: CommoditiesPage, quotes: Quotes
+) -> None:
+    qtbot.mouseClick(page._refresh_button, Qt.MouseButton.LeftButton)
+
+    assert sorted(quotes.calls) == ["CL=F", "GC=F"]  # même l'or, déjà valorisé aujourd'hui
+
+
+def test_each_day_adds_one_row_of_history_and_past_days_stay_untouched(
+    qtbot: QtBot, repo: CommodityRepository, quotes: Quotes
+) -> None:
+    clock = [NOW]
+    widget = CommoditiesPage(
+        repo,
+        today=lambda: clock[0].date(),
+        now=lambda: clock[0],
+        price_fetcher=quotes,
+        background=False,
+    )
+    qtbot.addWidget(widget)
+    widget.show()
+    gold = repo.list_holdings()[0]
+    assert len(gold.history) == 1  # la valorisation du 12 novembre
+
+    clock[0] = NOW + timedelta(days=1, hours=-12)  # le lendemain matin
+    widget.refresh()
+    assert "Cache" in widget._table.cellWidget(0, 3).text()  # la valeur d'hier est un cache
+    widget.refresh_prices()  # nouvelle journée : l'or est de nouveau interrogé
+
+    gold = repo.list_holdings()[0]
+    assert [(h.valuation_date, h.price) for h in gold.history] == [
+        (date(2026, 11, 12), D("71.85")),  # hier, figé
+        (date(2026, 11, 13), D("72.00")),
+    ]
+    assert gold.price is not None and gold.price.valuation_date == date(2026, 11, 13)
+    assert "Cache" not in widget._table.cellWidget(0, 3).text()
+    assert widget._chart.can_draw()  # la courbe utilise l'historique quotidien
 
 
 # --- Achat, vente, modification, création -------------------------------------

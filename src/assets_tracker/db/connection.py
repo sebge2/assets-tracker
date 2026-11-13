@@ -70,8 +70,14 @@ def connect(path: Path | str, key_provider: Callable[[], bytes] = database_key) 
 def _migrate(conn: Any) -> None:
     """Applique les migrations SQLite sans perdre l'historique local."""
     version = int(conn.execute("PRAGMA user_version").fetchone()[0])
-    if version >= 1:
-        return
+    if version < 1:
+        _migrate_to_1(conn)
+    if version < 2:
+        _migrate_to_2(conn)
+
+
+def _migrate_to_1(conn: Any) -> None:
+    """`cash_movements` accepte le type `LOYALTY_BONUS`."""
     definition = conn.execute(
         "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'cash_movements'"
     ).fetchone()[0]
@@ -96,3 +102,18 @@ def _migrate(conn: Any) -> None:
                 "ON cash_movements(account_id, movement_date)"
             )
     conn.execute("PRAGMA user_version = 1")
+
+
+def _migrate_to_2(conn: Any) -> None:
+    """Les derniers cours de matières premières (`prices`) deviennent des valorisations.
+
+    `prices` reste en place, intacte : plus rien n'y écrit, rien n'est supprimé.
+    """
+    with conn:
+        conn.execute(
+            "INSERT OR IGNORE INTO valuations "
+            "(asset_type, asset_id, valuation_date, value, fetched_at) "
+            "SELECT 'COMMODITY', p.asset_id, substr(p.fetched_at, 1, 10), p.price, p.fetched_at "
+            "FROM prices p JOIN commodity_details d ON d.asset_id = p.asset_id"
+        )
+    conn.execute("PRAGMA user_version = 2")

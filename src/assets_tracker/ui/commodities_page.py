@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
-from datetime import date, datetime, timedelta
+from datetime import date, datetime
 from decimal import Decimal
 
 from PySide6.QtCore import QObject, QRectF, QRunnable, QSize, Qt, QThreadPool, QTimer, Signal
@@ -36,6 +36,7 @@ from assets_tracker.domain.commodities import (
     valuation,
 )
 from assets_tracker.domain.models import Position, Transaction, TransactionType
+from assets_tracker.domain.valuation import assets_to_refresh
 from assets_tracker.market.commodities import fetch_holding_price
 from assets_tracker.ui import icons, theme
 from assets_tracker.ui.commodity_chart import PositionChart
@@ -58,7 +59,6 @@ from assets_tracker.ui.formatting import (
 from assets_tracker.ui.widgets import RIGHT, Card, fit_height, prepare_table, table_cell
 
 CURRENCY = "EUR"
-STALE_AFTER = timedelta(hours=24)
 REFRESH_EVERY_MS = 15 * 60 * 1000
 WIDE_LAYOUT = 1340  # largeur de page à partir de laquelle la fiche passe à droite
 DETAIL_WIDTH = 380
@@ -87,13 +87,12 @@ class HoldingView:
         return self.holding.asset.id
 
 
-def build_view(holding: Holding, now: datetime, failed: set[int]) -> HoldingView:
+def build_view(holding: Holding, today: date, failed: set[int]) -> HoldingView:
+    """Valorise une matière ; sa valorisation est « en cache » si elle date d'un jour passé."""
     position = holding.position
     price = holding.price
     priced = valuation(position, price.price) if price is not None else None
-    stale = price is not None and (
-        now - price.fetched_at > STALE_AFTER or holding.asset.id in failed
-    )
+    stale = price is not None and (price.valuation_date < today or holding.asset.id in failed)
     return HoldingView(holding, position, priced, stale)
 
 
@@ -228,7 +227,7 @@ class CommoditiesPage(QWidget):
         heading.addWidget(title)
         heading.addWidget(subtitle)
         self._refresh_button = QPushButton("Actualiser les cours")
-        self._refresh_button.clicked.connect(self.refresh_prices)
+        self._refresh_button.clicked.connect(lambda _=False: self.refresh_prices(force=True))
         add = QPushButton("Nouvelle position")
         add.setProperty("variant", "primary")
         add.clicked.connect(self._new_position)
@@ -426,7 +425,8 @@ class CommoditiesPage(QWidget):
     def refresh(self) -> None:
         now = self._now()
         self._views = [
-            build_view(holding, now, self._failed) for holding in self._repository.list_holdings()
+            build_view(holding, self._today(), self._failed)
+            for holding in self._repository.list_holdings()
         ]
         self._shown = [
             v
@@ -591,9 +591,12 @@ class CommoditiesPage(QWidget):
             self._d_price_note.setStyleSheet(
                 f"color: {theme.WARNING if view.stale else theme.TEXT_MUTED};"
             )
-        points = [(t.trade_date, t.unit_price) for t in holding.transactions]
-        if holding.price is not None:
-            points.append((holding.price.fetched_at.date(), holding.price.price))
+        if len(holding.history) >= 2:  # valorisations quotidiennes historisées
+            points = [(v.valuation_date, v.price) for v in holding.history]
+        else:  # pas encore d'historique : prix de vos transactions et dernier cours
+            points = [(t.trade_date, t.unit_price) for t in holding.transactions]
+            if holding.price is not None:
+                points.append((holding.price.valuation_date, holding.price.price))
         self._chart.set_data(points, position.pru if position.quantity > 0 else None)
         self._tiles["Détention"].setText(f"{format_quantity(position.quantity)} {details.unit}")
         self._tiles["PRU"].setText(f"{money(position.pru, CURRENCY)}{per_unit(details)}")
@@ -693,15 +696,27 @@ class CommoditiesPage(QWidget):
 
     # -- cours --
 
-    def refresh_prices(self) -> None:
-        """Actualise les cours ; un échec garde le dernier cours connu (badge « Cache »)."""
+    def refresh_prices(self, force: bool = False) -> None:
+        """Actualise les cours : une seule fois par jour et par matière, sauf `force`.
+
+        Une matière déjà valorisée aujourd'hui n'est pas redemandée au fournisseur ; un échec
+        garde le dernier cours connu (badge « Cache ») et sera retenté au prochain passage.
+        """
         if self._refreshing:
             return
-        requests = [
-            (h.asset.id, h.details)
+        quoted = [
+            h
             for h in self._repository.list_holdings()
             if h.details.quote_symbol and h.asset.id is not None
         ]
+        due = set(
+            assets_to_refresh(
+                [h.asset.id for h in quoted if h.asset.id is not None],
+                self._repository.valued_on(self._today()),
+                force=force,
+            )
+        )
+        requests = [(h.asset.id, h.details) for h in quoted if h.asset.id in due and h.asset.id]
         if not requests:
             return
         self._refreshing = True
@@ -723,7 +738,7 @@ class CommoditiesPage(QWidget):
                 self._failed.add(asset_id)
             else:
                 self._failed.discard(asset_id)
-                self._repository.set_price(asset_id, price, stamp)
+                self._repository.record_price(asset_id, price, self._today(), stamp)
         self._tasks.clear()
         self._refreshing = False
         self._refresh_button.setEnabled(True)

@@ -1,4 +1,4 @@
-"""Persistance des matières premières : actifs, détails, transactions et derniers cours."""
+"""Persistance des matières premières : actifs, détails, transactions et valorisations."""
 
 from __future__ import annotations
 
@@ -7,20 +7,29 @@ from datetime import date, datetime
 from decimal import Decimal
 from typing import Any
 
+from assets_tracker.db.valuation_repository import ValuationRepository
 from assets_tracker.domain.commodities import (
     CommodityDetails,
     CommodityFamily,
     CommodityForm,
     validate_trade,
 )
-from assets_tracker.domain.models import Asset, Position, Transaction, TransactionType
+from assets_tracker.domain.models import (
+    Asset,
+    InstrumentType,
+    Position,
+    Transaction,
+    TransactionType,
+)
 from assets_tracker.domain.positions import compute_position
+from assets_tracker.domain.valuation import Valuation
 
 
 @dataclass(frozen=True, slots=True)
 class PriceRecord:
     price: Decimal  # dans l'unité de détention, en euros
-    fetched_at: datetime
+    fetched_at: datetime  # instant réel de l'appel au fournisseur
+    valuation_date: date  # jour représenté ; antérieur à aujourd'hui = dernier cours connu
 
 
 @dataclass(frozen=True, slots=True)
@@ -30,7 +39,8 @@ class Holding:
     asset: Asset
     details: CommodityDetails
     transactions: list[Transaction]
-    price: PriceRecord | None
+    price: PriceRecord | None  # dernière valorisation
+    history: list[PriceRecord]  # une valorisation par jour connu, de la plus ancienne
 
     @property
     def position(self) -> Position:
@@ -39,10 +49,11 @@ class Holding:
 
 
 class CommodityRepository:
-    """Accès aux tables `assets`, `commodity_details`, `transactions` et `prices`."""
+    """Accès aux tables `assets`, `commodity_details`, `transactions` et `valuations`."""
 
     def __init__(self, conn: Any) -> None:
         self._conn = conn
+        self._valuations = ValuationRepository(conn)
 
     # --- Lecture ------------------------------------------------------------
 
@@ -73,7 +84,10 @@ class CommodityRepository:
             quote_currency=row["quote_currency"],
             quote_unit=row["quote_unit"],
         )
-        return Holding(asset, details, self.transactions(asset_id), self.price(asset_id))
+        history = self.price_history(asset_id)
+        return Holding(
+            asset, details, self.transactions(asset_id), history[-1] if history else None, history
+        )
 
     def transactions(self, asset_id: int) -> list[Transaction]:
         rows = self._conn.execute(
@@ -95,12 +109,19 @@ class CommodityRepository:
         ]
 
     def price(self, asset_id: int) -> PriceRecord | None:
-        row = self._conn.execute(
-            "SELECT price, fetched_at FROM prices WHERE asset_id = ?", (asset_id,)
-        ).fetchone()
-        if row is None:
-            return None
-        return PriceRecord(Decimal(row["price"]), datetime.fromisoformat(row["fetched_at"]))
+        """Dernière valorisation connue (celle du jour, sinon la plus récente)."""
+        latest = self._valuations.latest(InstrumentType.COMMODITY, asset_id)
+        return None if latest is None else _record(latest.value, latest)
+
+    def price_history(self, asset_id: int) -> list[PriceRecord]:
+        return [
+            _record(v.value, v)
+            for v in self._valuations.history(InstrumentType.COMMODITY, asset_id)
+        ]
+
+    def valued_on(self, day: date) -> set[int]:
+        """Matières déjà valorisées ce jour-là : inutile de rappeler le fournisseur."""
+        return self._valuations.valued_on(InstrumentType.COMMODITY, day)
 
     # --- Positions ----------------------------------------------------------
 
@@ -293,12 +314,18 @@ class CommodityRepository:
 
     # --- Cours --------------------------------------------------------------
 
+    def record_price(
+        self, asset_id: int, price: Decimal, valuation_date: date, fetched_at: datetime
+    ) -> None:
+        """Historise la valorisation du jour ; elle sert de cache et de dernier cours hors ligne."""
+        self._valuations.record(
+            InstrumentType.COMMODITY, asset_id, valuation_date, price, fetched_at
+        )
+
     def set_price(self, asset_id: int, price: Decimal, fetched_at: datetime) -> None:
-        """Mémorise le dernier cours connu ; il sert hors ligne."""
-        with self._conn:
-            self._conn.execute(
-                "INSERT INTO prices (asset_id, price, fetched_at) VALUES (?, ?, ?) "
-                "ON CONFLICT(asset_id) DO UPDATE SET price = excluded.price, "
-                "fetched_at = excluded.fetched_at",
-                (asset_id, str(price), fetched_at.isoformat(timespec="seconds")),
-            )
+        """Comme `record_price`, pour le jour de `fetched_at`."""
+        self.record_price(asset_id, price, fetched_at.date(), fetched_at)
+
+
+def _record(value: Decimal, valuation: Valuation) -> PriceRecord:
+    return PriceRecord(value, valuation.fetched_at, valuation.valuation_date)

@@ -210,3 +210,23 @@ def test_deleting_a_position_removes_everything(repo: CommodityRepository, conn:
     assert repo.list_holdings() == []
     for table in ("assets", "commodity_details", "transactions", "prices"):
         assert conn.execute(f"SELECT count(*) AS n FROM {table}").fetchone()["n"] == 0
+
+
+def test_each_valuation_day_is_kept_in_the_history(repo: CommodityRepository) -> None:
+    holding = repo.create_position("Or", "XAU", gold_details(), first_buy())
+    asset_id = holding.asset.id
+    assert asset_id is not None
+    assert repo.valued_on(date(2026, 11, 12)) == set()
+
+    repo.record_price(asset_id, D("71.85"), date(2026, 11, 12), datetime(2026, 11, 12, 21, 3))
+    repo.record_price(asset_id, D("72.10"), date(2026, 11, 13), datetime(2026, 11, 13, 9, 0))
+
+    saved = repo.get_holding(asset_id)
+    assert saved is not None
+    assert [(h.valuation_date, h.price) for h in saved.history] == [
+        (date(2026, 11, 12), D("71.85")),
+        (date(2026, 11, 13), D("72.10")),
+    ]
+    assert saved.price == saved.history[-1]
+    assert repo.valued_on(date(2026, 11, 13)) == {asset_id}
+    assert repo.valued_on(date(2026, 11, 14)) == set()

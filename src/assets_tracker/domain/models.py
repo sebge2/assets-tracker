@@ -6,6 +6,18 @@ from decimal import Decimal
 from enum import StrEnum
 
 
+class InstrumentType(StrEnum):
+    """Type d'un actif : pilote la valorisation et l'origine du cours."""
+
+    STOCK = "STOCK"
+    BOND = "BOND"
+    FUND = "FUND"
+    CRYPTO = "CRYPTO"
+    CASH = "CASH"
+    TERM_NOTE = "TERM_NOTE"
+    COMMODITY = "COMMODITY"
+
+
 class TransactionType(StrEnum):
     BUY = "BUY"
     SELL = "SELL"

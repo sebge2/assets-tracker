@@ -84,3 +84,18 @@ CREATE TABLE IF NOT EXISTS commodity_details (
     quote_currency TEXT NOT NULL DEFAULT 'EUR',
     quote_unit     TEXT                     -- unité du cours (oz), NULL = unité de détention
 );
+
+-- Valorisations quotidiennes de tous les actifs (matières premières, fonds, actions…) :
+-- cache (le fournisseur n'est interrogé qu'une fois par jour et par actif) et historique.
+-- `value` est la valeur d'UNE unité de l'actif, en euros. Remplace `prices` (conservée, inutilisée).
+CREATE TABLE IF NOT EXISTS valuations (
+    asset_type     TEXT NOT NULL CHECK (asset_type IN
+        ('STOCK', 'BOND', 'FUND', 'CRYPTO', 'CASH', 'TERM_NOTE', 'COMMODITY')),
+    asset_id       INTEGER NOT NULL REFERENCES assets(id) ON DELETE CASCADE,
+    valuation_date TEXT NOT NULL,           -- ISO 8601 : le jour représenté
+    value          TEXT NOT NULL,           -- Decimal sérialisé (pas de float)
+    fetched_at     TEXT NOT NULL,           -- instant réel de l'appel au fournisseur
+    PRIMARY KEY (asset_type, asset_id, valuation_date)
+);
+
+CREATE INDEX IF NOT EXISTS idx_valuations_asset ON valuations(asset_id, valuation_date);
