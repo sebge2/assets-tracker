@@ -15,10 +15,12 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from assets_tracker.db.bond_repository import BondRepository
 from assets_tracker.db.cash_repository import CashRepository
 from assets_tracker.db.commodity_repository import CommodityRepository
 from assets_tracker.db.fund_repository import FundRepository
 from assets_tracker.ui import icons, theme
+from assets_tracker.ui.bonds_page import BondsPage
 from assets_tracker.ui.cash_page import CashPage
 from assets_tracker.ui.commodities_page import CommoditiesPage
 from assets_tracker.ui.funds_page import FundsPage
@@ -36,15 +38,20 @@ class MainWindow(QMainWindow):
         cash_repository = CashRepository(database)
         commodity_repository = CommodityRepository(database)
         fund_repository = FundRepository(database)
-        self.portfolio_page = PortfolioPage(cash_repository, commodity_repository)
+        bond_repository = BondRepository(database)
+        self.portfolio_page = PortfolioPage(
+            cash_repository, commodity_repository, fund_repository, bond_repository
+        )
         self.cash_page = CashPage(cash_repository)
         self._stack.addWidget(self.portfolio_page)
         self.commodities_page = CommoditiesPage(commodity_repository)
         self.funds_page = FundsPage(fund_repository)
+        self.bonds_page = BondsPage(bond_repository)
         self.projection_page = ProjectionPage()
         self._stack.addWidget(self.cash_page)
         self._stack.addWidget(self.commodities_page)
         self._stack.addWidget(self.funds_page)
+        self._stack.addWidget(self.bonds_page)
         self._stack.addWidget(self.projection_page)
 
         root = QWidget()
@@ -86,6 +93,7 @@ class MainWindow(QMainWindow):
                 ("Comptes cash", "cash"),
                 ("Matières premières", "commodities"),
                 ("Fonds", "fund"),
+                ("Obligations", "bond"),
                 ("Simulation", "simulation"),
             )
         ):
@@ -113,3 +121,6 @@ class MainWindow(QMainWindow):
             self.commodities_page.refresh()
         elif index == 3:
             self.funds_page.refresh()
+        elif index == 4:
+            self.bonds_page.refresh()
+            self.bonds_page.refresh_quotes()

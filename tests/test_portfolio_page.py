@@ -11,11 +11,15 @@ from PySide6.QtCore import QPointF
 from PySide6.QtWidgets import QLabel
 from pytestqt.qtbot import QtBot
 
+from assets_tracker.db.bond_repository import BondRepository
 from assets_tracker.db.cash_repository import CashRepository
 from assets_tracker.db.commodity_repository import CommodityRepository
 from assets_tracker.db.connection import connect
+from assets_tracker.db.fund_repository import FundRepository
+from assets_tracker.domain.bonds import BondDetails, CouponFrequency
 from assets_tracker.domain.cash import CashAccount, InterestFrequency, MovementKind
 from assets_tracker.domain.commodities import CommodityDetails, CommodityFamily, CommodityForm
+from assets_tracker.domain.funds import FundDetails, ValuationSource
 from assets_tracker.domain.models import Transaction, TransactionType
 from assets_tracker.ui.allocation_donut import AllocationDonut, DonutSlice
 from assets_tracker.ui.main_window import MainWindow
@@ -36,7 +40,13 @@ def conn(tmp_path: Path) -> Iterator[Any]:
 
 
 def make_page(qtbot: QtBot, conn: Any) -> PortfolioPage:
-    page = PortfolioPage(CashRepository(conn), CommodityRepository(conn), today=lambda: TODAY)
+    page = PortfolioPage(
+        CashRepository(conn),
+        CommodityRepository(conn),
+        FundRepository(conn),
+        BondRepository(conn),
+        today=lambda: TODAY,
+    )
     qtbot.addWidget(page)
     page.resize(1200, 900)
     return page
@@ -68,6 +78,39 @@ def fill(conn: Any) -> None:
     )
 
 
+def add_fund(conn: Any, currency: str = "EUR") -> None:
+    """10 parts achetées 100 le 2 février, valorisées 110 aujourd'hui."""
+    funds = FundRepository(conn)
+    details = FundDetails("Assurance-vie", None, ValuationSource.MANUAL, None)
+    fund = funds.create("Actions Monde", f"FR00000000{currency}", currency, details)
+    assert fund.asset.id is not None
+    funds.add_transaction(
+        fund.asset.id, TransactionType.BUY, date(2026, 2, 2), D(10), D(100), D(0)
+    )
+    funds.record_valuation(fund.asset.id, TODAY, D(110), datetime(2026, 11, 13, 9, 0))
+
+
+def add_bond(conn: Any, currency: str = "EUR") -> None:
+    """10 titres achetés à 98 % le 2 mars, cotés 101 % aujourd'hui (nominal 1 000)."""
+    bonds = BondRepository(conn)
+    details = BondDetails(
+        "État",
+        D(1000),
+        D(3),
+        CouponFrequency.ANNUAL,
+        date(2031, 5, 25),
+        ValuationSource.MANUAL,
+    )
+    bond = bonds.create("OAT 2031", f"FR00000001{currency}", currency, details)
+    assert bond.asset.id is not None
+    bonds.add_transaction(
+        bond.asset.id, TransactionType.BUY, date(2026, 3, 2), D(10), D(98), D("50")
+    )
+    bonds.record_quote(
+        bond.asset.id, TODAY, D(101), datetime(2026, 11, 13, 9, 0), ValuationSource.MANUAL
+    )
+
+
 def texts(page: PortfolioPage) -> list[str]:
     return [label.text() for label in page.findChildren(QLabel)]
 
@@ -88,6 +131,37 @@ def test_page_shows_totals_and_allocation(qtbot: QtBot, conn: Any) -> None:
     assert page._subtitle.text() == "Cours mis à jour à 09:42"
     assert page._empty.isHidden()
     assert page._donut.accessibleDescription().startswith("Matières premières")
+
+
+def test_funds_count_in_the_total_and_the_allocation(qtbot: QtBot, conn: Any) -> None:
+    fill(conn)
+    add_fund(conn)
+    page = make_page(qtbot, conn)
+    shown = texts(page)
+
+    assert f"9{NNBSP}300,00{NBSP}€" in shown  # 8 200 € + 10 parts × 110 €
+    assert "Fonds" in shown
+    assert page._portfolio is not None
+    assert [s.asset_type.value for s in page._portfolio.slices] == ["COMMODITY", "FUND", "CASH"]
+
+
+def test_a_fund_alone_is_enough_to_fill_the_page(qtbot: QtBot, conn: Any) -> None:
+    add_fund(conn)
+    page = make_page(qtbot, conn)
+
+    assert page._empty.isHidden()
+    assert f"1{NNBSP}100,00{NBSP}€" in texts(page)
+    assert f"+100,00{NBSP}€" in " ".join(texts(page))  # plus-value latente : 10 × (110 − 100)
+
+
+def test_funds_not_in_euros_are_left_out_and_reported(qtbot: QtBot, conn: Any) -> None:
+    fill(conn)
+    add_fund(conn, "USD")
+    page = make_page(qtbot, conn)
+
+    assert f"8{NNBSP}200,00{NBSP}€" in texts(page)  # le fonds en dollars n'est pas additionné
+    assert "Fonds en USD non inclus (pas de taux de change)." in texts(page)
+    assert not page._note.isHidden()
 
 
 def test_period_chips_change_the_chart_window(qtbot: QtBot, conn: Any) -> None:
@@ -131,3 +205,24 @@ def test_main_window_opens_on_the_portfolio(qtbot: QtBot, conn: Any) -> None:
     window = MainWindow(conn)
     qtbot.addWidget(window)
     assert window._stack.currentWidget() is window.portfolio_page
+
+
+def test_a_bond_alone_is_valued_by_its_quote(qtbot: QtBot, conn: Any) -> None:
+    add_bond(conn)
+    page = make_page(qtbot, conn)
+
+    assert page._empty.isHidden()
+    assert f"10{NNBSP}100,00{NBSP}€" in texts(page)  # 10 titres × 101 % de 1 000 €
+    # plus-value latente : 10 × (1 010 − 980) ; le coupon couru payé reste hors PRU
+    assert f"+300,00{NBSP}€" in " ".join(texts(page))
+    assert page._portfolio is not None
+    assert [s.asset_type.value for s in page._portfolio.slices] == ["BOND"]
+
+
+def test_bonds_not_in_euros_are_left_out_and_reported(qtbot: QtBot, conn: Any) -> None:
+    fill(conn)
+    add_bond(conn, "USD")
+    page = make_page(qtbot, conn)
+
+    assert f"8{NNBSP}200,00{NBSP}€" in texts(page)
+    assert "Obligations en USD non incluses (pas de taux de change)." in texts(page)

@@ -148,7 +148,7 @@ def relative_age(delta_seconds: float) -> str:
 
 ASSET_LABELS = {
     InstrumentType.STOCK: "Actions",
-    InstrumentType.FUND: "Fonds et ETF",
+    InstrumentType.FUND: "Fonds",
     InstrumentType.COMMODITY: "Matières premières",
     InstrumentType.CASH: "Cash",
     InstrumentType.BOND: "Obligations",

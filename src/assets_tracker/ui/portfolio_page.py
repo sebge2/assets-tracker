@@ -19,10 +19,13 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from assets_tracker.db.bond_repository import BondRepository
 from assets_tracker.db.cash_repository import CashRepository
 from assets_tracker.db.commodity_repository import CommodityRepository
+from assets_tracker.db.fund_repository import FundRepository
 from assets_tracker.domain.models import InstrumentType
 from assets_tracker.domain.portfolio import (
+    BASE_CURRENCY,
     CashSource,
     Portfolio,
     PortfolioInput,
@@ -96,6 +99,8 @@ class PortfolioPage(QWidget):
         self,
         cash: CashRepository,
         commodities: CommodityRepository,
+        funds: FundRepository,
+        bonds: BondRepository,
         *,
         today: Callable[[], date] = date.today,
         parent: QWidget | None = None,
@@ -103,6 +108,10 @@ class PortfolioPage(QWidget):
         super().__init__(parent)
         self._cash = cash
         self._commodities = commodities
+        self._funds = funds
+        self._bonds = bonds
+        self._foreign_funds: tuple[str, ...] = ()
+        self._foreign_bonds: tuple[str, ...] = ()
         self._today = today
         self._period = 12
         self._portfolio: Portfolio | None = None
@@ -182,7 +191,8 @@ class PortfolioPage(QWidget):
         body.addWidget(self._allocation, 1)
 
         self._empty = QLabel(
-            "Rien à afficher pour l'instant : ajoutez un compte cash ou une matière première."
+            "Rien à afficher pour l'instant : ajoutez un compte cash, un fonds, "
+            "une obligation ou une matière première."
         )
         self._empty.setProperty("role", "muted")
         self._empty.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -223,6 +233,28 @@ class PortfolioPage(QWidget):
             )
             for holding in self._commodities.list_holdings()
         ]
+        funds = self._funds.list_holdings()
+        # Comme le cash : pas de taux de change stocké, un fonds hors EUR est exclu et signalé.
+        self._foreign_funds = tuple(
+            sorted({h.asset.currency for h in funds if h.asset.currency != BASE_CURRENCY})
+        )
+        for holding in funds:
+            asset_id = holding.asset.id
+            if asset_id is None or holding.asset.currency != BASE_CURRENCY:
+                continue
+            history = [(v.valuation_date, v.value) for v in self._funds.nav_history(asset_id)]
+            priced.append(PricedSource(InstrumentType.FUND, holding.transactions, history))
+        bonds = self._bonds.list_holdings()
+        self._foreign_bonds = tuple(
+            sorted({h.asset.currency for h in bonds if h.asset.currency != BASE_CURRENCY})
+        )
+        for bond in bonds:
+            asset_id = bond.asset.id
+            if asset_id is None or bond.asset.currency != BASE_CURRENCY:
+                continue
+            # Valeur d'un titre en euros (cours % × nominal), comme le prix des transactions.
+            history = [(v.valuation_date, v.value) for v in self._bonds.quote_history(asset_id)]
+            priced.append(PricedSource(InstrumentType.BOND, bond.transactions, history))
         return PortfolioInput(cash, priced)
 
     def refresh(self) -> None:
@@ -232,7 +264,9 @@ class PortfolioPage(QWidget):
         self._subtitle.setText(
             f"Cours mis à jour à {max(quoted):%H:%M}" if quoted else "Aucun cours actualisé"
         )
-        self._value_card.set(money(summary.total, "EUR"), "Cash et matières premières")
+        self._value_card.set(
+            money(summary.total, "EUR"), "Cash, fonds, obligations et matières premières"
+        )
         gain_color = theme.variation_color(summary.unrealized)
         arrow = "▲ " if summary.unrealized > 0 else "▼ " if summary.unrealized < 0 else ""
         percent = (
@@ -302,14 +336,18 @@ class PortfolioPage(QWidget):
             row.left.connect(lambda: self._donut.set_highlight(-1))
             self._legend.addWidget(row)
             self._rows.append(row)
-        self._note.setText(
-            "Comptes en "
-            + ", ".join(portfolio.foreign_cash)
-            + " non inclus (pas de taux de change)."
-            if portfolio.foreign_cash
-            else ""
-        )
-        self._note.setVisible(bool(portfolio.foreign_cash))
+        notes = []
+        if portfolio.foreign_cash:
+            currencies = ", ".join(portfolio.foreign_cash)
+            notes.append(f"Comptes en {currencies} non inclus (pas de taux de change).")
+        if self._foreign_funds:
+            currencies = ", ".join(self._foreign_funds)
+            notes.append(f"Fonds en {currencies} non inclus (pas de taux de change).")
+        if self._foreign_bonds:
+            currencies = ", ".join(self._foreign_bonds)
+            notes.append(f"Obligations en {currencies} non incluses (pas de taux de change).")
+        self._note.setText(" ".join(notes))
+        self._note.setVisible(bool(notes))
 
     def _on_donut_highlight(self, index: int) -> None:
         for position, row in enumerate(self._rows):

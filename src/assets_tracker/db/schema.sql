@@ -108,3 +108,22 @@ CREATE TABLE IF NOT EXISTS fund_details (
     valuation_source TEXT NOT NULL CHECK (valuation_source IN ('YAHOO', 'MANUAL')),
     quote_symbol     TEXT
 );
+
+-- Obligations : achats/ventes dans `transactions` (prix unitaire en euros par titre, frais
+-- nuls), cours dans `valuations` (valeur d'UN titre en euros). `valuation_source` est
+-- l'origine du dernier cours enregistré.
+CREATE TABLE IF NOT EXISTS bond_details (
+    asset_id         INTEGER PRIMARY KEY REFERENCES assets(id) ON DELETE CASCADE,
+    issuer           TEXT,
+    nominal          TEXT NOT NULL,           -- Decimal sérialisé, en devise de l'obligation
+    coupon_rate      TEXT NOT NULL,           -- en %
+    frequency        TEXT NOT NULL CHECK (frequency IN ('ANNUAL', 'SEMIANNUAL', 'QUARTERLY')),
+    maturity         TEXT NOT NULL,           -- ISO 8601
+    valuation_source TEXT NOT NULL CHECK (valuation_source IN ('YAHOO', 'MANUAL'))
+);
+
+-- Coupon couru payé (achat) ou perçu (vente) d'une transaction : hors prix, hors PRU.
+CREATE TABLE IF NOT EXISTS bond_accruals (
+    transaction_id INTEGER PRIMARY KEY REFERENCES transactions(id) ON DELETE CASCADE,
+    accrued        TEXT NOT NULL
+);
