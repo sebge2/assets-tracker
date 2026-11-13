@@ -16,6 +16,7 @@ from assets_tracker.db.cash_repository import CashRepository
 from assets_tracker.db.commodity_repository import CommodityRepository
 from assets_tracker.db.connection import connect
 from assets_tracker.db.fund_repository import FundRepository
+from assets_tracker.db.fx_repository import FxRepository
 from assets_tracker.domain.bonds import BondDetails, CouponFrequency
 from assets_tracker.domain.cash import CashAccount, InterestFrequency, MovementKind
 from assets_tracker.domain.commodities import CommodityDetails, CommodityFamily, CommodityForm
@@ -45,6 +46,7 @@ def make_page(qtbot: QtBot, conn: Any) -> PortfolioPage:
         CommodityRepository(conn),
         FundRepository(conn),
         BondRepository(conn),
+        FxRepository(conn),
         today=lambda: TODAY,
     )
     qtbot.addWidget(page)
@@ -226,3 +228,18 @@ def test_bonds_not_in_euros_are_left_out_and_reported(qtbot: QtBot, conn: Any) -
 
     assert f"8{NNBSP}200,00{NBSP}€" in texts(page)
     assert "Obligations en USD non incluses (pas de taux de change)." in texts(page)
+
+
+def test_foreign_bonds_and_funds_are_converted_with_the_cached_rate(
+    qtbot: QtBot, conn: Any
+) -> None:
+    fill(conn)
+    add_bond(conn, "USD")
+    add_fund(conn, "USD")
+    FxRepository(conn).record("USD", TODAY, D("0.9"), datetime(2026, 11, 13, 9, 0))
+
+    page = make_page(qtbot, conn)
+
+    # 8 200 € + obligation 10 × 1 010 $ × 0,9 = 9 090 € + fonds 10 parts à 110 $ × 0,9 = 990 €
+    assert f"18{NNBSP}280,00{NBSP}€" in texts(page)
+    assert page._note.isHidden()

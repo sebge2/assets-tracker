@@ -13,6 +13,7 @@ from pytestqt.qtbot import QtBot
 
 from assets_tracker.db.bond_repository import BondRepository
 from assets_tracker.db.connection import connect
+from assets_tracker.db.fx_repository import FxRepository
 from assets_tracker.domain.bonds import BondDetails, CouponFrequency
 from assets_tracker.domain.funds import ValuationSource
 from assets_tracker.domain.models import TransactionType
@@ -93,13 +94,18 @@ class Quotes:
 
 
 def make_page(
-    qtbot: QtBot, repository: BondRepository, quotes: Quotes | None = None
+    qtbot: QtBot,
+    repository: BondRepository,
+    quotes: Quotes | None = None,
+    rates: Quotes | None = None,
 ) -> BondsPage:
     page = BondsPage(
         repository,
+        FxRepository(repository._conn),
         today=lambda: TODAY,
         now=lambda: NOW,
         quote_fetcher=quotes or Quotes({}),
+        rate_fetcher=rates or Quotes({}),
         background=False,
     )
     qtbot.addWidget(page)
@@ -288,7 +294,12 @@ def test_a_provider_error_never_breaks_the_page(qtbot: QtBot, repository: BondRe
         raise RuntimeError("réseau indisponible")
 
     page = BondsPage(
-        repository, today=lambda: TODAY, now=lambda: NOW, quote_fetcher=failing, background=False
+        repository,
+        FxRepository(repository._conn),
+        today=lambda: TODAY,
+        now=lambda: NOW,
+        quote_fetcher=failing,
+        background=False,
     )
     qtbot.addWidget(page)
 
@@ -635,3 +646,80 @@ def test_trade_flow_records_the_operation_the_accrued_coupon_and_the_quote(
     bought = oat.transactions[-1]
     assert oat.accruals[bought.id or 0] == D("28.27")  # 2 × 30 € × 172 / 365
     assert page._d_value.text() == f"12{NNBSP}240,00{NBSP}€"  # 12 titres × 1 020 €
+
+
+# --- Taux de change -----------------------------------------------------------
+
+
+def add_dollar_bond(repository: BondRepository) -> None:
+    """5 titres en dollars achetés à 98 %, cotés 100 % (nominal 1 000 $), coupon 5 %."""
+    details = BondDetails(
+        "Trésor US",
+        D(1000),
+        D(5),
+        CouponFrequency.SEMIANNUAL,
+        date(2031, 6, 15),
+        ValuationSource.MANUAL,
+    )
+    holding = repository.create("T-Note 2031", "US0000000001", "USD", details)
+    assert holding.asset.id is not None
+    repository.add_transaction(
+        holding.asset.id, TransactionType.BUY, date(2026, 5, 2), D(5), D(98), D(0)
+    )
+    repository.record_quote(holding.asset.id, TODAY, D(100), NOW, ValuationSource.MANUAL)
+
+
+def test_summary_converts_foreign_bonds_with_the_cached_rate(
+    qtbot: QtBot, repository: BondRepository
+) -> None:
+    seed(repository)
+    add_dollar_bond(repository)
+    FxRepository(repository._conn).record("USD", TODAY, D("0.5"), NOW)
+
+    page = make_page(qtbot, repository)
+
+    # 18 048 € + 5 × 1 000 $ × 0,5 = 20 548 € ; plus-value 168 + 5 × 20 $ × 0,5 = 218 €
+    assert page._value_card._value.text() == f"20{NNBSP}548,00{NBSP}€"
+    assert page._value_card._sub.text().endswith("converti en EUR")
+    assert page._gain_card._value.text() == f"+218,00{NBSP}€"
+    assert page._coupon_card._value.text() == f"785,00{NBSP}€"  # 660 + 5 × 1 000 $ × 5 % × 0,5
+
+
+def test_foreign_bonds_without_a_rate_are_left_out_of_the_summary(
+    qtbot: QtBot, repository: BondRepository
+) -> None:
+    seed(repository)
+    add_dollar_bond(repository)
+
+    page = make_page(qtbot, repository)
+
+    assert page._value_card._value.text() == f"18{NNBSP}048,00{NBSP}€"
+    assert "1 sans taux de change exclue(s)" in page._value_card._sub.text()
+
+
+def test_refresh_stores_the_rate_once_a_day(qtbot: QtBot, repository: BondRepository) -> None:
+    seed(repository)
+    add_dollar_bond(repository)
+    rates = Quotes({"USD": D("0.5")})
+    page = make_page(qtbot, repository, rates=rates)
+
+    page.refresh_quotes()
+    page.refresh_quotes()
+
+    assert rates.calls == ["USD"]
+    cached = FxRepository(repository._conn).latest("USD")
+    assert cached is not None and (cached.rate, cached.rate_date) == (D("0.5"), TODAY)
+    assert page._value_card._value.text() == f"20{NNBSP}548,00{NBSP}€"
+
+
+def test_a_failed_rate_keeps_the_previous_one(qtbot: QtBot, repository: BondRepository) -> None:
+    seed(repository)
+    add_dollar_bond(repository)
+    FxRepository(repository._conn).record("USD", date(2026, 11, 1), D("0.5"), NOW)
+    page = make_page(qtbot, repository, rates=Quotes({}))  # Yahoo n'a pas de taux
+
+    page.refresh_quotes(force=True)
+
+    cached = FxRepository(repository._conn).latest("USD")
+    assert cached is not None and cached.rate_date == date(2026, 11, 1)
+    assert page._value_card._value.text() == f"20{NNBSP}548,00{NBSP}€"

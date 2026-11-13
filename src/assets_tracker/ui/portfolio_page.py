@@ -23,6 +23,8 @@ from assets_tracker.db.bond_repository import BondRepository
 from assets_tracker.db.cash_repository import CashRepository
 from assets_tracker.db.commodity_repository import CommodityRepository
 from assets_tracker.db.fund_repository import FundRepository
+from assets_tracker.db.fx_repository import FxRepository
+from assets_tracker.domain.fx import rate_for, transactions_in_euros
 from assets_tracker.domain.models import InstrumentType
 from assets_tracker.domain.portfolio import (
     BASE_CURRENCY,
@@ -101,6 +103,7 @@ class PortfolioPage(QWidget):
         commodities: CommodityRepository,
         funds: FundRepository,
         bonds: BondRepository,
+        fx: FxRepository,
         *,
         today: Callable[[], date] = date.today,
         parent: QWidget | None = None,
@@ -110,6 +113,7 @@ class PortfolioPage(QWidget):
         self._commodities = commodities
         self._funds = funds
         self._bonds = bonds
+        self._fx = fx
         self._foreign_funds: tuple[str, ...] = ()
         self._foreign_bonds: tuple[str, ...] = ()
         self._today = today
@@ -233,28 +237,43 @@ class PortfolioPage(QWidget):
             )
             for holding in self._commodities.list_holdings()
         ]
+        rates = self._fx.latest_rates()
         funds = self._funds.list_holdings()
-        # Comme le cash : pas de taux de change stocké, un fonds hors EUR est exclu et signalé.
+        # Devise étrangère : convertie au dernier taux connu, exclue et signalée sans taux.
         self._foreign_funds = tuple(
-            sorted({h.asset.currency for h in funds if h.asset.currency != BASE_CURRENCY})
+            sorted({h.asset.currency for h in funds if rate_for(h.asset.currency, rates) is None})
         )
         for holding in funds:
             asset_id = holding.asset.id
-            if asset_id is None or holding.asset.currency != BASE_CURRENCY:
+            rate = rate_for(holding.asset.currency, rates)
+            if asset_id is None or rate is None:
                 continue
-            history = [(v.valuation_date, v.value) for v in self._funds.nav_history(asset_id)]
-            priced.append(PricedSource(InstrumentType.FUND, holding.transactions, history))
+            history = [
+                (v.valuation_date, v.value * rate) for v in self._funds.nav_history(asset_id)
+            ]
+            priced.append(
+                PricedSource(
+                    InstrumentType.FUND, transactions_in_euros(holding.transactions, rate), history
+                )
+            )
         bonds = self._bonds.list_holdings()
         self._foreign_bonds = tuple(
-            sorted({h.asset.currency for h in bonds if h.asset.currency != BASE_CURRENCY})
+            sorted({h.asset.currency for h in bonds if rate_for(h.asset.currency, rates) is None})
         )
         for bond in bonds:
             asset_id = bond.asset.id
-            if asset_id is None or bond.asset.currency != BASE_CURRENCY:
+            rate = rate_for(bond.asset.currency, rates)
+            if asset_id is None or rate is None:
                 continue
-            # Valeur d'un titre en euros (cours % × nominal), comme le prix des transactions.
-            history = [(v.valuation_date, v.value) for v in self._bonds.quote_history(asset_id)]
-            priced.append(PricedSource(InstrumentType.BOND, bond.transactions, history))
+            # Valeur d'un titre (cours % × nominal), comme le prix des transactions, en euros.
+            history = [
+                (v.valuation_date, v.value * rate) for v in self._bonds.quote_history(asset_id)
+            ]
+            priced.append(
+                PricedSource(
+                    InstrumentType.BOND, transactions_in_euros(bond.transactions, rate), history
+                )
+            )
         return PortfolioInput(cash, priced)
 
     def refresh(self) -> None:

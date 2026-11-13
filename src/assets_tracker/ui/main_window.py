@@ -19,6 +19,7 @@ from assets_tracker.db.bond_repository import BondRepository
 from assets_tracker.db.cash_repository import CashRepository
 from assets_tracker.db.commodity_repository import CommodityRepository
 from assets_tracker.db.fund_repository import FundRepository
+from assets_tracker.db.fx_repository import FxRepository
 from assets_tracker.ui import icons, theme
 from assets_tracker.ui.bonds_page import BondsPage
 from assets_tracker.ui.cash_page import CashPage
@@ -39,14 +40,15 @@ class MainWindow(QMainWindow):
         commodity_repository = CommodityRepository(database)
         fund_repository = FundRepository(database)
         bond_repository = BondRepository(database)
+        fx_repository = FxRepository(database)
         self.portfolio_page = PortfolioPage(
-            cash_repository, commodity_repository, fund_repository, bond_repository
+            cash_repository, commodity_repository, fund_repository, bond_repository, fx_repository
         )
         self.cash_page = CashPage(cash_repository)
         self._stack.addWidget(self.portfolio_page)
         self.commodities_page = CommoditiesPage(commodity_repository)
         self.funds_page = FundsPage(fund_repository)
-        self.bonds_page = BondsPage(bond_repository)
+        self.bonds_page = BondsPage(bond_repository, fx_repository)
         self.projection_page = ProjectionPage()
         self._stack.addWidget(self.cash_page)
         self._stack.addWidget(self.commodities_page)

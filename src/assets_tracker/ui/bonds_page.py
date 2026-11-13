@@ -34,11 +34,13 @@ from PySide6.QtWidgets import (
 )
 
 from assets_tracker.db.bond_repository import BondHolding, BondRepository
+from assets_tracker.db.fx_repository import FxRepository
 from assets_tracker.domain.bonds import (
     BondDetails,
     BondQuote,
     CouponFrequency,
     accrued_coupon,
+    bond_in_euros,
     bond_totals,
     bond_trade_quote,
     bond_value,
@@ -53,10 +55,12 @@ from assets_tracker.domain.bonds import (
     validate_quantity,
 )
 from assets_tracker.domain.funds import FundValue, ValuationSource
+from assets_tracker.domain.fx import currencies_to_refresh, rate_for
 from assets_tracker.domain.models import Position, Transaction, TransactionType
 from assets_tracker.domain.positions import compute_position
 from assets_tracker.domain.valuation import Valuation, assets_to_refresh
 from assets_tracker.market.bonds import fetch_bond_price_percent
+from assets_tracker.market.fx import fetch_rate_to_eur
 from assets_tracker.ui import theme
 from assets_tracker.ui.commodity_chart import PositionChart
 from assets_tracker.ui.form_helpers import date_edit, labeled, row, to_date
@@ -78,6 +82,7 @@ DETAIL_WIDTH = 380
 LAST_OPERATIONS = 3
 SOURCE_LABELS = {ValuationSource.YAHOO: "Yahoo", ValuationSource.MANUAL: "manuel"}
 QuoteFetcher = Callable[[str], Decimal | None]
+RateFetcher = Callable[[str], Decimal | None]
 
 
 # --- Données affichées ------------------------------------------------------
@@ -210,6 +215,17 @@ def fetch_quotes(
     return results
 
 
+def fetch_rates(currencies: list[str], fetcher: RateFetcher) -> dict[str, Decimal | None]:
+    """Un taux vers l'euro (ou None) par devise ; une erreur ne bloque jamais les autres."""
+    results: dict[str, Decimal | None] = {}
+    for currency in currencies:
+        try:
+            results[currency] = fetcher(currency)
+        except Exception:
+            results[currency] = None
+    return results
+
+
 class _TaskSignals(QObject):
     done = Signal(object)
 
@@ -217,14 +233,27 @@ class _TaskSignals(QObject):
 class _QuoteTask(QRunnable):
     """Interroge Yahoo dans un thread du pool ; la base n'est jamais touchée ici."""
 
-    def __init__(self, requests: list[tuple[int, str]], fetcher: QuoteFetcher) -> None:
+    def __init__(
+        self,
+        requests: list[tuple[int, str]],
+        fetcher: QuoteFetcher,
+        currencies: list[str],
+        rate_fetcher: RateFetcher,
+    ) -> None:
         super().__init__()
         self.signals = _TaskSignals()
         self._requests = requests
         self._fetcher = fetcher
+        self._currencies = currencies
+        self._rate_fetcher = rate_fetcher
 
     def run(self) -> None:
-        self.signals.done.emit(fetch_quotes(self._requests, self._fetcher))
+        self.signals.done.emit(
+            (
+                fetch_quotes(self._requests, self._fetcher),
+                fetch_rates(self._currencies, self._rate_fetcher),
+            )
+        )
 
 
 # --- Échéancier ---------------------------------------------------------------
@@ -721,24 +750,29 @@ class BondsPage(QWidget):
     def __init__(
         self,
         repository: BondRepository,
+        fx: FxRepository,
         *,
         today: Callable[[], date] = date.today,
         now: Callable[[], datetime] = datetime.now,
         quote_fetcher: QuoteFetcher = fetch_bond_price_percent,
+        rate_fetcher: RateFetcher = fetch_rate_to_eur,
         background: bool = True,
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
         self._repository = repository
+        self._fx = fx
         self._today = today
         self._now = now
         self._quote_fetcher = quote_fetcher
+        self._rate_fetcher = rate_fetcher
         self._background = background
         self._selected: int | None = None
         self._views: list[BondView] = []
         self._pending: list[BondView] = []
         self._failed: set[int] = set()  # Yahoo n'a pas répondu pour ces obligations
         self._attempted: set[int] = set()  # déjà interrogées depuis le lancement
+        self._attempted_rates: set[str] = set()  # devises déjà interrogées depuis le lancement
         self._refreshing = False
         self._tasks: list[_QuoteTask] = []
         self._maturity_view: int | None = None  # obligation de la prochaine échéance
@@ -1000,15 +1034,26 @@ class BondsPage(QWidget):
         self._show_selected()
 
     def _summarize(self, today: date) -> None:
-        in_euros = [v for v in self._views if v.holding.asset.currency == CURRENCY]
-        totals = bond_totals(
-            (v.position, v.details, v.quote.value if v.quote else None) for v in in_euros
-        )
+        """Synthèse en euros : chaque obligation est convertie au dernier taux de change connu."""
+        rates = self._fx.latest_rates()
+        converted = []
+        without_rate = 0
+        for v in self._views:
+            rate = rate_for(v.holding.asset.currency, rates)
+            if rate is None:
+                without_rate += 1
+                continue
+            converted.append(
+                bond_in_euros(v.position, v.details, v.quote.value if v.quote else None, rate)
+            )
+        totals = bond_totals(converted)
         notes = ["Cours × nominal × titres"]
         if totals.unvalued:
             notes.append(f"{totals.unvalued} sans cours")
-        if len(in_euros) < len(self._views):
-            notes.append(f"{len(self._views) - len(in_euros)} hors EUR exclue(s)")
+        if any(v.holding.asset.currency != CURRENCY for v in self._views):
+            notes.append("converti en EUR")
+        if without_rate:
+            notes.append(f"{without_rate} sans taux de change exclue(s)")
         self._value_card.set(money(totals.value, CURRENCY), " · ".join(notes))
         self._gain_card.set(
             signed_money(totals.gain, CURRENCY),
@@ -1019,10 +1064,7 @@ class BondsPage(QWidget):
             money(totals.annual_coupons, CURRENCY),
             f"Rendement courant {_pct(totals.current_yield)}",
         )
-        ladder = maturity_ladder(
-            ((v.details, v.position.quantity) for v in in_euros),
-            today,
-        )
+        ladder = maturity_ladder(((d, p.quantity) for p, d, _ in converted), today)
         self._ladder.set_data(ladder)
         self._ladder_card.setVisible(bool(ladder))
 
@@ -1248,27 +1290,49 @@ class BondsPage(QWidget):
         )
         if not force:
             due -= self._attempted
+        currencies = currencies_to_refresh(
+            (h.asset.currency for h in open_bonds),
+            self._fx.latest_rates(),
+            self._today(),
+            force=force,
+        )
+        if not force:
+            currencies = [c for c in currencies if c not in self._attempted_rates]
         requests = [
             (h.asset.id, h.asset.symbol)
             for h in open_bonds
             if h.asset.id is not None and h.asset.id in due
         ]
-        if not requests:
+        if not requests and not currencies:
             return
         self._refreshing = True
         self._attempted.update(asset_id for asset_id, _ in requests)
+        self._attempted_rates.update(currencies)
         if not self._background:
-            self._finish_refresh(fetch_quotes(requests, self._quote_fetcher))
+            self._finish_refresh(
+                (
+                    fetch_quotes(requests, self._quote_fetcher),
+                    fetch_rates(currencies, self._rate_fetcher),
+                )
+            )
             return
-        task = _QuoteTask(requests, self._quote_fetcher)
+        task = _QuoteTask(requests, self._quote_fetcher, currencies, self._rate_fetcher)
         task.signals.done.connect(self._finish_refresh)
         self._tasks.append(task)
         QThreadPool.globalInstance().start(task)
 
     def _finish_refresh(self, results: object) -> None:
-        assert isinstance(results, dict)
+        assert isinstance(results, tuple)
+        quotes, rates = results
         stamp, today = self._now(), self._today()
-        for asset_id, price in results.items():
+        for currency, rate in rates.items():
+            if rate is None:
+                continue  # le dernier taux connu reste utilisé
+            try:
+                self._fx.record(currency, today, rate, stamp)
+            except ValueError:
+                continue
+        for asset_id, price in quotes.items():
             if price is None:
                 self._failed.add(asset_id)
                 continue

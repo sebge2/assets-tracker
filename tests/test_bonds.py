@@ -11,6 +11,7 @@ import pytest
 from assets_tracker.db.bond_repository import BondRepository
 from assets_tracker.db.connection import connect
 from assets_tracker.domain.bonds import (
+    bond_in_euros,
     BondDetails,
     CouponFrequency,
     accrued_coupon,
@@ -128,6 +129,17 @@ def test_bond_value_and_totals() -> None:
     assert totals.annual_coupons == D(300 + 360 + 120)
     assert totals.unvalued == 1
     assert totals.current_yield is not None
+
+
+def test_bond_in_euros_scales_amounts_but_not_percentages() -> None:
+    position = Position(1, D(10), D(984), D(20))
+    converted, details, value = bond_in_euros(position, bond(), D(1012), D("0.5"))
+    assert (converted.quantity, converted.pru, converted.realized_pnl) == (D(10), D(492), D(10))
+    assert details.nominal == D(500) and details.coupon_rate == bond().coupon_rate
+    assert value == D(506)
+    assert bond_in_euros(position, bond(), None, D("0.5"))[2] is None
+    totals = bond_totals([(converted, details, value)])
+    assert (totals.value, totals.gain, totals.annual_coupons) == (D(5060), D(140), D(150))
 
 
 def test_maturity_ladder_fills_empty_years_and_skips_matured() -> None:

@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import calendar
 from collections.abc import Iterable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import date
 from decimal import ROUND_HALF_UP, Decimal
 from enum import StrEnum
@@ -276,3 +276,20 @@ def bond_trade_quote(
 def trade_amount(kind: TransactionType, quote: BondQuote) -> Decimal:
     """Flux de trésorerie signé : négatif à l'achat, positif à la vente."""
     return -quote.total if kind is TransactionType.BUY else quote.total
+
+
+def bond_in_euros(
+    position: Position, details: BondDetails, value_per_bond: Decimal | None, rate: Decimal
+) -> tuple[Position, BondDetails, Decimal | None]:
+    """Convertit une obligation en euros (taux `devise → EUR`) pour `bond_totals` et l'échéancier.
+
+    Le nominal, le PRU et la valeur d'un titre sont multipliés par le taux ; les % ne changent pas.
+    """
+    converted = replace(
+        position, pru=position.pru * rate, realized_pnl=position.realized_pnl * rate
+    )
+    return (
+        converted,
+        replace(details, nominal=details.nominal * rate),
+        None if value_per_bond is None else value_per_bond * rate,
+    )

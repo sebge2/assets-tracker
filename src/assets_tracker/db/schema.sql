@@ -127,3 +127,13 @@ CREATE TABLE IF NOT EXISTS bond_accruals (
     transaction_id INTEGER PRIMARY KEY REFERENCES transactions(id) ON DELETE CASCADE,
     accrued        TEXT NOT NULL
 );
+
+-- Cache des taux de change vers l'euro : `rate` = euros pour UNE unité de `currency`
+-- (Decimal sérialisé). Un taux par devise et par jour ; le dernier sert à convertir en EUR.
+CREATE TABLE IF NOT EXISTS exchange_rates (
+    currency   TEXT NOT NULL,
+    rate_date  TEXT NOT NULL,               -- ISO 8601 : le jour du taux
+    rate       TEXT NOT NULL,
+    fetched_at TEXT NOT NULL,               -- instant réel de l'appel au fournisseur
+    PRIMARY KEY (currency, rate_date)
+);

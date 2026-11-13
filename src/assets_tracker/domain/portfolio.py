@@ -1,8 +1,8 @@
 """Vue d'ensemble du portefeuille : valeur totale, plus-values, répartition et évolution mensuelle.
 
 Tout est recalculé depuis les mouvements et les transactions, rien n'est stocké. Les sources
-actuelles sont les comptes cash, les fonds et les matières premières ; un nouveau type d'actif ajoute une
-entrée `PortfolioInput` sans changer le reste.
+actuelles sont les comptes cash, les fonds, les obligations et les matières premières ; un
+nouveau type d'actif ajoute une entrée `PortfolioInput` sans changer le reste.
 """
 
 from __future__ import annotations
