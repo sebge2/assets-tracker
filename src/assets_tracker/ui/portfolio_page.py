@@ -24,6 +24,7 @@ from assets_tracker.db.cash_repository import CashRepository
 from assets_tracker.db.commodity_repository import CommodityRepository
 from assets_tracker.db.fund_repository import FundRepository
 from assets_tracker.db.fx_repository import FxRepository
+from assets_tracker.db.stock_repository import StockRepository
 from assets_tracker.domain.fx import rate_for, transactions_in_euros
 from assets_tracker.domain.models import InstrumentType
 from assets_tracker.domain.portfolio import (
@@ -103,6 +104,7 @@ class PortfolioPage(QWidget):
         commodities: CommodityRepository,
         funds: FundRepository,
         bonds: BondRepository,
+        stocks: StockRepository,
         fx: FxRepository,
         *,
         today: Callable[[], date] = date.today,
@@ -113,9 +115,11 @@ class PortfolioPage(QWidget):
         self._commodities = commodities
         self._funds = funds
         self._bonds = bonds
+        self._stocks = stocks
         self._fx = fx
         self._foreign_funds: tuple[str, ...] = ()
         self._foreign_bonds: tuple[str, ...] = ()
+        self._foreign_stocks: tuple[str, ...] = ()
         self._today = today
         self._period = 12
         self._portfolio: Portfolio | None = None
@@ -196,7 +200,7 @@ class PortfolioPage(QWidget):
 
         self._empty = QLabel(
             "Rien à afficher pour l'instant : ajoutez un compte cash, un fonds, "
-            "une obligation ou une matière première."
+            "une obligation, une action ou une matière première."
         )
         self._empty.setProperty("role", "muted")
         self._empty.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -274,6 +278,23 @@ class PortfolioPage(QWidget):
                     InstrumentType.BOND, transactions_in_euros(bond.transactions, rate), history
                 )
             )
+        stocks = self._stocks.list_holdings()
+        self._foreign_stocks = tuple(
+            sorted({h.asset.currency for h in stocks if rate_for(h.asset.currency, rates) is None})
+        )
+        for stock in stocks:
+            asset_id = stock.asset.id
+            rate = rate_for(stock.asset.currency, rates)
+            if asset_id is None or rate is None:
+                continue
+            history = [
+                (v.valuation_date, v.value * rate) for v in self._stocks.quote_history(asset_id)
+            ]
+            priced.append(
+                PricedSource(
+                    InstrumentType.STOCK, transactions_in_euros(stock.transactions, rate), history
+                )
+            )
         return PortfolioInput(cash, priced)
 
     def refresh(self) -> None:
@@ -284,7 +305,7 @@ class PortfolioPage(QWidget):
             f"Cours mis à jour à {max(quoted):%H:%M}" if quoted else "Aucun cours actualisé"
         )
         self._value_card.set(
-            money(summary.total, "EUR"), "Cash, fonds, obligations et matières premières"
+            money(summary.total, "EUR"), "Cash, fonds, obligations, actions et matières premières"
         )
         gain_color = theme.variation_color(summary.unrealized)
         arrow = "▲ " if summary.unrealized > 0 else "▼ " if summary.unrealized < 0 else ""
@@ -365,6 +386,9 @@ class PortfolioPage(QWidget):
         if self._foreign_bonds:
             currencies = ", ".join(self._foreign_bonds)
             notes.append(f"Obligations en {currencies} non incluses (pas de taux de change).")
+        if self._foreign_stocks:
+            currencies = ", ".join(self._foreign_stocks)
+            notes.append(f"Actions en {currencies} non incluses (pas de taux de change).")
         self._note.setText(" ".join(notes))
         self._note.setVisible(bool(notes))
 

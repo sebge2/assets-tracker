@@ -17,11 +17,13 @@ from assets_tracker.db.commodity_repository import CommodityRepository
 from assets_tracker.db.connection import connect
 from assets_tracker.db.fund_repository import FundRepository
 from assets_tracker.db.fx_repository import FxRepository
+from assets_tracker.db.stock_repository import StockRepository
 from assets_tracker.domain.bonds import BondDetails, CouponFrequency
 from assets_tracker.domain.cash import CashAccount, InterestFrequency, MovementKind
 from assets_tracker.domain.commodities import CommodityDetails, CommodityFamily, CommodityForm
 from assets_tracker.domain.funds import FundDetails, ValuationSource
 from assets_tracker.domain.models import Transaction, TransactionType
+from assets_tracker.domain.stocks import StockDetails
 from assets_tracker.ui.allocation_donut import AllocationDonut, DonutSlice
 from assets_tracker.ui.main_window import MainWindow
 from assets_tracker.ui.portfolio_page import PortfolioPage
@@ -46,6 +48,7 @@ def make_page(qtbot: QtBot, conn: Any) -> PortfolioPage:
         CommodityRepository(conn),
         FundRepository(conn),
         BondRepository(conn),
+        StockRepository(conn),
         FxRepository(conn),
         today=lambda: TODAY,
     )
@@ -110,6 +113,20 @@ def add_bond(conn: Any, currency: str = "EUR") -> None:
     )
     bonds.record_quote(
         bond.asset.id, TODAY, D(101), datetime(2026, 11, 13, 9, 0), ValuationSource.MANUAL
+    )
+
+
+def add_stock(conn: Any, currency: str = "EUR") -> None:
+    """10 actions achetées 100 (frais 4) le 2 février, cotées 110 aujourd'hui."""
+    stocks = StockRepository(conn)
+    details = StockDetails("Euronext Paris", "Industrie", D(2), ValuationSource.MANUAL)
+    stock = stocks.create("Air Liquide", f"AI.{currency}", currency, details)
+    assert stock.asset.id is not None
+    stocks.add_transaction(
+        stock.asset.id, TransactionType.BUY, date(2026, 2, 2), D(10), D(100), D(4)
+    )
+    stocks.record_quote(
+        stock.asset.id, TODAY, D(110), datetime(2026, 11, 13, 9, 0), ValuationSource.MANUAL
     )
 
 
@@ -242,4 +259,32 @@ def test_foreign_bonds_and_funds_are_converted_with_the_cached_rate(
 
     # 8 200 € + obligation 10 × 1 010 $ × 0,9 = 9 090 € + fonds 10 parts à 110 $ × 0,9 = 990 €
     assert f"18{NNBSP}280,00{NBSP}€" in texts(page)
+    assert page._note.isHidden()
+
+
+def test_a_stock_alone_is_valued_by_its_quote(qtbot: QtBot, conn: Any) -> None:
+    add_stock(conn)
+    page = make_page(qtbot, conn)
+
+    assert page._empty.isHidden()
+    assert f"1{NNBSP}100,00{NBSP}€" in texts(page)  # 10 actions × 110 €
+    assert f"+96,00{NBSP}€" in " ".join(texts(page))  # 1 100 − (1 000 + 4 de frais)
+    assert page._portfolio is not None
+    assert [s.asset_type.value for s in page._portfolio.slices] == ["STOCK"]
+
+
+def test_stocks_not_in_euros_are_left_out_without_a_rate_and_converted_with_one(
+    qtbot: QtBot, conn: Any
+) -> None:
+    fill(conn)
+    add_stock(conn, "USD")
+    page = make_page(qtbot, conn)
+
+    assert f"8{NNBSP}200,00{NBSP}€" in texts(page)
+    assert "Actions en USD non incluses (pas de taux de change)." in texts(page)
+
+    FxRepository(conn).record("USD", TODAY, D("0.9"), datetime(2026, 11, 13, 9, 0))
+    page.refresh()
+
+    assert f"9{NNBSP}190,00{NBSP}€" in texts(page)  # 8 200 + 10 × 110 $ × 0,9
     assert page._note.isHidden()

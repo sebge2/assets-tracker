@@ -137,3 +137,14 @@ CREATE TABLE IF NOT EXISTS exchange_rates (
     fetched_at TEXT NOT NULL,               -- instant réel de l'appel au fournisseur
     PRIMARY KEY (currency, rate_date)
 );
+
+-- Actions : achats/ventes dans `transactions` (prix unitaire et frais dans la devise de
+-- l'action), cours dans `valuations` (valeur d'UNE action dans sa devise). `assets.symbol`
+-- est le ticker Yahoo. `valuation_source` est l'origine du dernier cours enregistré.
+CREATE TABLE IF NOT EXISTS stock_details (
+    asset_id         INTEGER PRIMARY KEY REFERENCES assets(id) ON DELETE CASCADE,
+    place            TEXT,
+    sector           TEXT,
+    dividend         TEXT,                    -- dividende annuel par action, NULL = inconnu
+    valuation_source TEXT NOT NULL CHECK (valuation_source IN ('YAHOO', 'MANUAL'))
+);
