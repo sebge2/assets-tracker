@@ -124,6 +124,12 @@ mypy src                         # typage strict
   - **Portefeuille** : un bon y entre comme une position d'un titre (`portfolio_transactions` : achat du capital à la souscription, vente au remboursement au prix capital + intérêts reçus ; `portfolio_prices` : valeur en fin de mois et aujourd'hui). La plus-value latente est donc les intérêts courus, la plus-value réalisée les intérêts encaissés. `PortfolioPage(term_notes=…)` est optionnel. La carte de répartition ajoute le périmètre « Bons de caisse » ; un bon remboursé en est exclu.
   - **Exposition** : secteurs et zones comme les autres actifs (`asset_exposures`, supprimés avec le bon), pondérés par la valeur actuelle.
 
+## Libellé de source cliquable
+Dans la fiche détail (Actions, Obligations, Fonds), le badge « Cours/VL Yahoo · date » est un lien
+vers `https://finance.yahoo.com/quote/<symbole>` (`source_badge_html` / `yahoo_quote_url` dans
+`ui/widgets.py`), uniquement si la source est Yahoo. Les cellules du tableau restent non cliquables
+(elles laissent passer la souris pour la sélection de ligne).
+
 ## Pages défilantes
 
 Le contenu d'une page (Portefeuille, Matières premières, Actions, Obligations, Fonds) est un

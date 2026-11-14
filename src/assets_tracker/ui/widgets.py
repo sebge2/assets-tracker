@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+from html import escape
+from urllib.parse import quote
+
 from PySide6.QtCore import QSize, Qt
 from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
@@ -18,6 +21,21 @@ from PySide6.QtWidgets import (
 from assets_tracker.ui import theme
 
 RIGHT = Qt.AlignmentFlag.AlignRight
+
+
+def yahoo_quote_url(symbol: str) -> str:
+    """Adresse de la page Yahoo Finance d'un instrument."""
+    return f"https://finance.yahoo.com/quote/{quote(symbol.strip(), safe='')}"
+
+
+def source_badge_html(text: str, symbol: str | None, color: str) -> str:
+    """Libellé de source ; lien vers la page Yahoo de l'instrument quand `symbol` est connu."""
+    if not symbol or not symbol.strip():
+        return escape(text)
+    return (
+        f'<a href="{escape(yahoo_quote_url(symbol), quote=True)}" style="text-decoration: none;">'
+        f'<span style="color: {color}; text-decoration: underline;">{escape(text)}</span></a>'
+    )
 
 
 class PageContent(QWidget):

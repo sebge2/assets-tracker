@@ -93,7 +93,14 @@ from assets_tracker.ui.formatting import (
     parse_decimal,
     signed_money,
 )
-from assets_tracker.ui.widgets import RIGHT, Card, PageContent, fit_height, prepare_table
+from assets_tracker.ui.widgets import (
+    RIGHT,
+    Card,
+    PageContent,
+    fit_height,
+    prepare_table,
+    source_badge_html,
+)
 
 CURRENCY = "EUR"
 
@@ -658,6 +665,8 @@ class StocksPage(QWidget):
         layout.setSpacing(16)
 
         self._d_source = QLabel()
+        self._d_source.setTextFormat(Qt.TextFormat.RichText)
+        self._d_source.setOpenExternalLinks(True)
         badge = QHBoxLayout()
         badge.addWidget(self._d_source)
         badge.addStretch(1)
@@ -939,7 +948,12 @@ class StocksPage(QWidget):
         background, foreground = (
             (theme.WARNING_SOFT, theme.WARNING) if warn else (theme.OVERLAY, theme.TEXT_MUTED)
         )
-        self._d_source.setText(badge)
+        linked = asset.symbol if details.valuation_source is ValuationSource.YAHOO else None
+        self._d_source.setText(source_badge_html(badge, linked, foreground))
+        self._d_source.setToolTip("Ouvrir la page Yahoo Finance" if linked else "")
+        self._d_source.setCursor(
+            Qt.CursorShape.PointingHandCursor if linked else Qt.CursorShape.ArrowCursor
+        )
         self._d_source.setStyleSheet(
             f"background: {background}; color: {foreground}; border-radius: 10px; "
             "padding: 2px 10px; font-size: 12px; font-weight: 600;"
