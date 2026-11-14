@@ -119,7 +119,7 @@ def add_bond(conn: Any, currency: str = "EUR") -> None:
 def add_stock(conn: Any, currency: str = "EUR") -> None:
     """10 actions achetées 100 (frais 4) le 2 février, cotées 110 aujourd'hui."""
     stocks = StockRepository(conn)
-    details = StockDetails("Euronext Paris", "Industrie", D(2), ValuationSource.MANUAL)
+    details = StockDetails("Euronext Paris", D(2), ValuationSource.MANUAL)
     stock = stocks.create("Air Liquide", f"AI.{currency}", currency, details)
     assert stock.asset.id is not None
     stocks.add_transaction(

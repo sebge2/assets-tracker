@@ -25,13 +25,11 @@ from assets_tracker.domain.models import Position, Transaction, TransactionType
 ZERO = Decimal(0)
 HUNDRED = Decimal(100)
 STALE_QUOTE_DAYS = STALE_NAV_DAYS  # au-delà, un cours est signalé comme à mettre à jour
-OTHER_SECTOR = "Autre"
 
 
 @dataclass(frozen=True, slots=True)
 class StockDetails:
     place: str
-    sector: str
     dividend: Decimal | None  # dividende annuel par action, dans la devise de l'action
     valuation_source: ValuationSource
 
@@ -143,19 +141,6 @@ def stock_in_euros(
     )
 
 
-def sector_breakdown(items: Iterable[tuple[str, Decimal]]) -> list[tuple[str, Decimal, Decimal]]:
-    """(secteur, valeur, % du total), du plus gros au plus petit ; secteur vide = « Autre »."""
-    per_sector: dict[str, Decimal] = {}
-    for sector, value in items:
-        if value <= ZERO:
-            continue
-        name = sector.strip() or OTHER_SECTOR
-        per_sector[name] = per_sector.get(name, ZERO) + value
-    total = sum(per_sector.values(), ZERO)
-    ranked = sorted(per_sector.items(), key=lambda entry: (-entry[1], entry[0]))
-    return [(name, value, value / total * HUNDRED) for name, value in ranked]
-
-
 def price_series(
     history: Iterable[tuple[date, Decimal]], transactions: Iterable[Transaction], today: date
 ) -> list[tuple[date, Decimal]]:
@@ -193,7 +178,6 @@ __all__ = [
     "is_quote_stale",
     "price_change",
     "price_series",
-    "sector_breakdown",
     "stock_in_euros",
     "stock_totals",
     "stock_trade_quote",

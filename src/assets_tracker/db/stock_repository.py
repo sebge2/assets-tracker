@@ -74,12 +74,11 @@ class StockRepository:
             )
             asset_id = int(cursor.lastrowid)
             self._conn.execute(
-                "INSERT INTO stock_details (asset_id, place, sector, dividend, valuation_source) "
-                "VALUES (?, ?, ?, ?, ?)",
+                "INSERT INTO stock_details (asset_id, place, dividend, valuation_source) "
+                "VALUES (?, ?, ?, ?)",
                 (
                     asset_id,
                     details.place.strip() or None,
-                    details.sector.strip() or None,
                     None if details.dividend is None else str(details.dividend),
                     details.valuation_source.value,
                 ),
@@ -107,10 +106,9 @@ class StockRepository:
                 (ticker, name.strip(), currency.strip().upper(), asset_id),
             )
             self._conn.execute(
-                "UPDATE stock_details SET place = ?, sector = ?, dividend = ? WHERE asset_id = ?",
+                "UPDATE stock_details SET place = ?, dividend = ? WHERE asset_id = ?",
                 (
                     details.place.strip() or None,
-                    details.sector.strip() or None,
                     None if details.dividend is None else str(details.dividend),
                     asset_id,
                 ),
@@ -202,7 +200,6 @@ class StockRepository:
             Asset(asset_id, row["symbol"], row["name"], row["currency"]),
             StockDetails(
                 row["place"] or "",
-                row["sector"] or "",
                 None if row["dividend"] is None else Decimal(row["dividend"]),
                 ValuationSource(row["valuation_source"]),
             ),

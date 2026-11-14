@@ -22,9 +22,11 @@ from PySide6.QtWidgets import (
 from assets_tracker.db.bond_repository import BondRepository
 from assets_tracker.db.cash_repository import CashRepository
 from assets_tracker.db.commodity_repository import CommodityRepository
+from assets_tracker.db.exposure_repository import ExposureRepository
 from assets_tracker.db.fund_repository import FundRepository
 from assets_tracker.db.fx_repository import FxRepository
 from assets_tracker.db.stock_repository import StockRepository
+from assets_tracker.domain.exposure import ExposedAsset, ExposureKind
 from assets_tracker.domain.fx import rate_for, transactions_in_euros
 from assets_tracker.domain.models import InstrumentType
 from assets_tracker.domain.portfolio import (
@@ -47,6 +49,7 @@ from assets_tracker.ui.formatting import (
     money,
     signed_money,
 )
+from assets_tracker.ui.portfolio_exposure import PortfolioExposureCard
 from assets_tracker.ui.widgets import Card
 
 _PERIODS = (("3 mois", 3), ("6 mois", 6), ("12 mois", 12), ("Tout", 0))
@@ -98,6 +101,8 @@ class _LegendRow(QFrame):
 class PortfolioPage(QWidget):
     """Vue d'ensemble, lecture seule : tout est recalculé depuis les comptes et les positions."""
 
+    asset_requested = Signal(object, int)  # (InstrumentType, identifiant) : ouvrir sa fiche
+
     def __init__(
         self,
         cash: CashRepository,
@@ -107,6 +112,7 @@ class PortfolioPage(QWidget):
         stocks: StockRepository,
         fx: FxRepository,
         *,
+        exposure: ExposureRepository | None = None,
         today: Callable[[], date] = date.today,
         parent: QWidget | None = None,
     ) -> None:
@@ -117,6 +123,7 @@ class PortfolioPage(QWidget):
         self._bonds = bonds
         self._stocks = stocks
         self._fx = fx
+        self._exposure = exposure
         self._foreign_funds: tuple[str, ...] = ()
         self._foreign_bonds: tuple[str, ...] = ()
         self._foreign_stocks: tuple[str, ...] = ()
@@ -198,6 +205,9 @@ class PortfolioPage(QWidget):
         body.addWidget(self._evolution, 2)
         body.addWidget(self._allocation, 1)
 
+        self._exposure_card = PortfolioExposureCard()
+        self._exposure_card.asset_requested.connect(self.asset_requested)
+
         self._empty = QLabel(
             "Rien à afficher pour l'instant : ajoutez un compte cash, un fonds, "
             "une obligation, une action ou une matière première."
@@ -213,6 +223,7 @@ class PortfolioPage(QWidget):
         layout.addLayout(header)
         layout.addLayout(cards)
         layout.addLayout(body)
+        layout.addWidget(self._exposure_card)
         layout.addWidget(self._empty)
         layout.addStretch(1)
 
@@ -327,7 +338,53 @@ class PortfolioPage(QWidget):
         has_data = bool(self._portfolio.months)
         self._evolution.setVisible(has_data)
         self._allocation.setVisible(has_data)
+        self._exposure_card.set_assets(self._exposed_assets(self._portfolio))
+        self._exposure_card.setVisible(has_data and self._exposure is not None)
         self._empty.setVisible(not has_data)
+
+    # -- secteurs et zones --
+
+    def _exposed_assets(self, portfolio: Portfolio) -> list[ExposedAsset]:
+        """Valeur en EUR de chaque position ouverte (dernier taux connu) et ses répartitions.
+
+        Les devises sans taux sont exclues, comme dans la valeur totale ; le cash et les matières
+        premières entrent en un seul bloc chacun (leur valeur vient de la répartition par type).
+        """
+        if self._exposure is None:
+            return []
+        rates = self._fx.latest_rates()
+        assets: list[ExposedAsset] = []
+        groups = (
+            (InstrumentType.FUND, self._funds.list_holdings()),
+            (InstrumentType.BOND, self._bonds.list_holdings()),
+            (InstrumentType.STOCK, self._stocks.list_holdings()),
+        )
+        for instrument, holdings in groups:
+            for holding in holdings:
+                asset_id = holding.asset.id
+                rate = rate_for(holding.asset.currency, rates)
+                quantity = holding.position.quantity
+                if asset_id is None or rate is None or holding.valuation is None or quantity <= 0:
+                    continue
+                assets.append(
+                    ExposedAsset(
+                        holding.asset.name,
+                        instrument,
+                        quantity * holding.valuation.value * rate,
+                        tuple(self._exposure.get(asset_id, ExposureKind.SECTOR)),
+                        tuple(self._exposure.get(asset_id, ExposureKind.ZONE)),
+                        asset_id,
+                    )
+                )
+        blocks = {
+            InstrumentType.CASH: "Comptes cash",
+            InstrumentType.COMMODITY: "Matières premières",
+        }
+        for part in portfolio.slices:
+            if part.asset_type in blocks:
+                name = blocks[part.asset_type]
+                assets.append(ExposedAsset(name, part.asset_type, part.value, (), ()))
+        return assets
 
     # -- évolution --
 

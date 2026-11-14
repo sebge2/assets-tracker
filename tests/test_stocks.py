@@ -17,7 +17,6 @@ from assets_tracker.domain.stocks import (
     annual_dividends,
     dividend_yield,
     price_change,
-    sector_breakdown,
     stock_in_euros,
     stock_totals,
     stock_trade_quote,
@@ -31,10 +30,10 @@ NOW = datetime(2026, 11, 13, 9, 0)
 
 
 def details(
-    dividend: str | None = "3.20", sector: str = "Industrie", place: str = "Euronext Paris"
+    dividend: str | None = "3.20", place: str = "Euronext Paris"
 ) -> StockDetails:
     return StockDetails(
-        place, sector, None if dividend is None else D(dividend), ValuationSource.YAHOO
+        place, None if dividend is None else D(dividend), ValuationSource.YAHOO
     )
 
 
@@ -108,25 +107,6 @@ def test_stock_in_euros_scales_amounts_and_dividends() -> None:
     assert (totals.value, totals.gain, totals.dividends) == (D("1712.25"), D("343.50"), D("7.80"))
 
 
-def test_sector_breakdown_ranks_and_groups() -> None:
-    parts = sector_breakdown(
-        [
-            ("Technologie", D(300)),
-            ("Luxe", D(100)),
-            ("", D(100)),
-            ("Technologie", D(500)),
-            ("X", D(0)),
-        ]
-    )
-    assert [(name, value) for name, value, _ in parts] == [
-        ("Technologie", D(800)),
-        ("Autre", D(100)),
-        ("Luxe", D(100)),
-    ]
-    assert [percent for _, _, percent in parts] == [D(80), D(10), D(10)]
-    assert sector_breakdown([]) == []
-
-
 def test_trade_quote_adds_fees_to_a_purchase_and_deducts_them_from_a_sale() -> None:
     buy = stock_trade_quote(TransactionType.BUY, D(5), D("171.20"), D("1.90"))
     assert (buy.gross, buy.fees, buy.total) == (D("856.00"), D("1.90"), D("857.90"))
@@ -155,7 +135,9 @@ def create_air_liquide(repository: StockRepository) -> int:
 
 
 def test_create_validates_and_normalizes(repository: StockRepository) -> None:
-    holding = repository.create(" Air Liquide ", " ai.pa ", "eur", details("3.2", " Industrie "))
+    holding = repository.create(
+        " Air Liquide ", " ai.pa ", "eur", details("3.2", " Euronext Paris ")
+    )
     assert (holding.asset.name, holding.asset.symbol, holding.asset.currency) == (
         "Air Liquide",
         "AI.PA",
@@ -173,7 +155,7 @@ def test_create_validates_and_normalizes(repository: StockRepository) -> None:
 
 
 def test_a_missing_dividend_stays_unknown(repository: StockRepository) -> None:
-    holding = repository.create("ASML", "ASML.AS", "EUR", details(None, "Technologie"))
+    holding = repository.create("ASML", "ASML.AS", "EUR", details(None, "Euronext Amsterdam"))
     assert holding.details.dividend is None
 
 
@@ -233,7 +215,7 @@ def test_update_changes_the_terms_and_keeps_the_history(repository: StockReposit
     repository.record_quote(asset_id, TODAY, D("101.20"), NOW, ValuationSource.MANUAL)
 
     updated = repository.update(
-        asset_id, " Air Liquide SA ", "ai.pa", "usd", details("3.5", "Chimie", "NYSE")
+        asset_id, " Air Liquide SA ", "ai.pa", "usd", details("3.5", "NYSE")
     )
 
     assert (updated.asset.name, updated.asset.symbol, updated.asset.currency) == (
@@ -241,7 +223,7 @@ def test_update_changes_the_terms_and_keeps_the_history(repository: StockReposit
         "AI.PA",
         "USD",
     )
-    assert updated.details == StockDetails("NYSE", "Chimie", D("3.5"), ValuationSource.MANUAL)
+    assert updated.details == StockDetails("NYSE", D("3.5"), ValuationSource.MANUAL)
     assert updated.position.quantity == D(10) and updated.position.pru == D("98.40")
     assert updated.valuation is not None and updated.valuation.value == D("101.20")
 

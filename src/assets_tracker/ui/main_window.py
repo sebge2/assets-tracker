@@ -18,9 +18,11 @@ from PySide6.QtWidgets import (
 from assets_tracker.db.bond_repository import BondRepository
 from assets_tracker.db.cash_repository import CashRepository
 from assets_tracker.db.commodity_repository import CommodityRepository
+from assets_tracker.db.exposure_repository import ExposureRepository
 from assets_tracker.db.fund_repository import FundRepository
 from assets_tracker.db.fx_repository import FxRepository
 from assets_tracker.db.stock_repository import StockRepository
+from assets_tracker.domain.models import InstrumentType
 from assets_tracker.ui import icons, theme
 from assets_tracker.ui.bonds_page import BondsPage
 from assets_tracker.ui.cash_page import CashPage
@@ -44,6 +46,7 @@ class MainWindow(QMainWindow):
         bond_repository = BondRepository(database)
         stock_repository = StockRepository(database)
         fx_repository = FxRepository(database)
+        exposure_repository = ExposureRepository(database)
         self.portfolio_page = PortfolioPage(
             cash_repository,
             commodity_repository,
@@ -51,14 +54,16 @@ class MainWindow(QMainWindow):
             bond_repository,
             stock_repository,
             fx_repository,
+            exposure=exposure_repository,
         )
         self.cash_page = CashPage(cash_repository)
         self._stack.addWidget(self.portfolio_page)
         self.commodities_page = CommoditiesPage(commodity_repository)
-        self.funds_page = FundsPage(fund_repository)
-        self.bonds_page = BondsPage(bond_repository, fx_repository)
-        self.stocks_page = StocksPage(stock_repository, fx_repository)
+        self.funds_page = FundsPage(fund_repository, exposure=exposure_repository)
+        self.bonds_page = BondsPage(bond_repository, fx_repository, exposure=exposure_repository)
+        self.stocks_page = StocksPage(stock_repository, fx_repository, exposure=exposure_repository)
         self.projection_page = ProjectionPage()
+        self.portfolio_page.asset_requested.connect(self._open_asset)
         self._stack.addWidget(self.cash_page)
         self._stack.addWidget(self.commodities_page)
         self._stack.addWidget(self.funds_page)
@@ -122,6 +127,20 @@ class MainWindow(QMainWindow):
             layout.addWidget(button)
         layout.addStretch(1)
         return sidebar
+
+    def _open_asset(self, instrument: InstrumentType, asset_id: int) -> None:
+        """Ouvre la fiche d'un actif depuis l'écran Portefeuille (pour compléter ses données)."""
+        pages = {
+            InstrumentType.FUND: (3, self.funds_page),
+            InstrumentType.BOND: (4, self.bonds_page),
+            InstrumentType.STOCK: (5, self.stocks_page),
+        }
+        target = pages.get(instrument)
+        if target is None:
+            return
+        index, page = target
+        page.select(asset_id)
+        self._navigate(index)
 
     def _navigate(self, index: int) -> None:
         self._nav_buttons[index].setChecked(True)

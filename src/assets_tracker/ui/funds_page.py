@@ -33,7 +33,9 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from assets_tracker.db.exposure_repository import ExposureRepository
 from assets_tracker.db.fund_repository import FundHolding, FundRepository
+from assets_tracker.domain.exposure import ExposureEntry, ExposureKind, exposure_breakdown
 from assets_tracker.domain.funds import (
     FundDetails,
     FundValue,
@@ -51,6 +53,12 @@ from assets_tracker.domain.positions import compute_position
 from assets_tracker.domain.valuation import Valuation
 from assets_tracker.ui import theme
 from assets_tracker.ui.commodity_chart import PositionChart
+from assets_tracker.ui.exposure_widgets import (
+    ExposureSection,
+    ExposureSummary,
+    edit_exposure,
+    main_label,
+)
 from assets_tracker.ui.form_helpers import date_edit, labeled, row, to_date
 from assets_tracker.ui.formatting import (
     MINUS,
@@ -530,12 +538,14 @@ class FundsPage(QWidget):
         self,
         repository: FundRepository,
         *,
+        exposure: ExposureRepository | None = None,
         today: Callable[[], date] = date.today,
         now: Callable[[], datetime] = datetime.now,
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
         self._repository = repository
+        self._exposure = exposure
         self._today = today
         self._now = now
         self._selected: int | None = None
@@ -582,6 +592,8 @@ class FundsPage(QWidget):
         alert_layout.addWidget(self._alert_text, 1)
         alert_layout.addWidget(alert_button, 0, Qt.AlignmentFlag.AlignVCenter)
 
+        self._exposure_card = ExposureSummary("LA VALEUR DES FONDS")
+
         self._table = QTableWidget()
         self._table.setAccessibleName("Fonds détenus")
         prepare_table(self._table, self._COLUMNS, row_height=64)
@@ -612,6 +624,7 @@ class FundsPage(QWidget):
         layout.addLayout(header)
         layout.addLayout(cards)
         layout.addWidget(self._alert)
+        layout.addWidget(self._exposure_card)
         layout.addLayout(self._body)
         layout.addWidget(self._empty)
         layout.addStretch(1)
@@ -686,10 +699,18 @@ class FundsPage(QWidget):
             "Montant investi",
             "Frais courants (TER)",
             "Date de la VL",
+            "Secteur principal",
+            "Zone principale",
         )
         for index, caption in enumerate(captions):
             grid.addWidget(self._tile(caption), index // 2, index % 2)
         layout.addLayout(grid)
+
+        self._exposure_section = ExposureSection()
+        self._exposure_section.edit_requested.connect(
+            lambda: self._edit_exposure(self._selected_view())
+        )
+        layout.addWidget(self._exposure_section)
 
         self._subscribe_button = QPushButton("Souscrire")
         self._subscribe_button.setProperty("variant", "primary")
@@ -770,6 +791,28 @@ class FundsPage(QWidget):
             theme.variation_color(totals.gain),
         )
         self._invested_card.set(money(totals.invested, CURRENCY), "Somme parts × PRU")
+        self._show_exposure(in_euros)
+
+    def _show_exposure(self, views: list[FundView]) -> None:
+        """Répartition des fonds en EUR (les autres devises restent exclues, comme la synthèse)."""
+        if self._exposure is None:
+            self._exposure_card.setVisible(False)
+            return
+        weighted = [
+            (v.asset_id, v.position.quantity * v.nav.value)
+            for v in views
+            if v.nav is not None and v.position.quantity > 0
+        ]
+        ids = [asset_id for asset_id, _ in weighted]
+        by_kind = {
+            kind: self._exposure.all_for(ids, kind)
+            for kind in (ExposureKind.SECTOR, ExposureKind.ZONE)
+        }
+        sectors, zones = (
+            exposure_breakdown((value, by_kind[kind][asset_id]) for asset_id, value in weighted)
+            for kind in (ExposureKind.SECTOR, ExposureKind.ZONE)
+        )
+        self._exposure_card.set_data(sectors, zones)
 
     def _fill_table(self) -> None:
         self._table.blockSignals(True)
@@ -880,6 +923,15 @@ class FundsPage(QWidget):
         self._tiles["Date de la VL"].setText(
             "—" if view.nav is None else f"{view.nav.valuation_date:%d/%m/%Y}"
         )
+        sectors: list[ExposureEntry] = []
+        zones: list[ExposureEntry] = []
+        if self._exposure is not None:
+            sectors = self._exposure.get(view.asset_id, ExposureKind.SECTOR)
+            zones = self._exposure.get(view.asset_id, ExposureKind.ZONE)
+        self._exposure_section.setVisible(self._exposure is not None)
+        self._exposure_section.set_data(sectors, zones)
+        self._tiles["Secteur principal"].setText(main_label(sectors))
+        self._tiles["Zone principale"].setText(main_label(zones))
         self._redeem_button.setEnabled(position.quantity > 0)
 
         _clear(self._operations)
@@ -935,6 +987,17 @@ class FundsPage(QWidget):
         if 0 <= current_row < len(self._views):
             self._selected = self._views[current_row].asset_id
             self._show_selected()
+
+    def select(self, asset_id: int) -> None:
+        """Choisit la ligne affichée dans la fiche (appliquée à la prochaine actualisation)."""
+        self._selected = asset_id
+
+    def _edit_exposure(self, view: FundView | None) -> None:
+        if view is None or self._exposure is None:
+            return
+        if edit_exposure(self, self._exposure, view.asset_id, view.holding.asset.name):
+            self._selected = view.asset_id
+            self.refresh()
 
     def _new_fund(self) -> None:
         dialog = FundDialog(self)

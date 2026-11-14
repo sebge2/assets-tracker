@@ -144,7 +144,17 @@ CREATE TABLE IF NOT EXISTS exchange_rates (
 CREATE TABLE IF NOT EXISTS stock_details (
     asset_id         INTEGER PRIMARY KEY REFERENCES assets(id) ON DELETE CASCADE,
     place            TEXT,
-    sector           TEXT,
+    -- (ancienne colonne `sector` abandonnée : secteurs et zones sont dans `asset_exposures`)
     dividend         TEXT,                    -- dividende annuel par action, NULL = inconnu
     valuation_source TEXT NOT NULL CHECK (valuation_source IN ('YAHOO', 'MANUAL'))
+);
+
+-- Répartition d'un actif (action, obligation, fonds) par secteur ou par zone géographique.
+-- `weight` est en pourcentage ; pour un type donné, la somme vaut 100 (ou aucune ligne).
+CREATE TABLE IF NOT EXISTS asset_exposures (
+    asset_id INTEGER NOT NULL REFERENCES assets(id) ON DELETE CASCADE,
+    kind     TEXT NOT NULL CHECK (kind IN ('SECTOR', 'ZONE')),
+    name     TEXT NOT NULL,
+    weight   TEXT NOT NULL,
+    PRIMARY KEY (asset_id, kind, name)
 );

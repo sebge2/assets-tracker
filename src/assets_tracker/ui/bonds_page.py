@@ -34,6 +34,7 @@ from PySide6.QtWidgets import (
 )
 
 from assets_tracker.db.bond_repository import BondHolding, BondRepository
+from assets_tracker.db.exposure_repository import ExposureRepository
 from assets_tracker.db.fx_repository import FxRepository
 from assets_tracker.domain.bonds import (
     BondDetails,
@@ -54,6 +55,7 @@ from assets_tracker.domain.bonds import (
     unit_value,
     validate_quantity,
 )
+from assets_tracker.domain.exposure import ExposureEntry, ExposureKind, exposure_breakdown
 from assets_tracker.domain.funds import FundValue, ValuationSource
 from assets_tracker.domain.fx import currencies_to_refresh, rate_for
 from assets_tracker.domain.models import Position, Transaction, TransactionType
@@ -63,6 +65,12 @@ from assets_tracker.market.bonds import fetch_bond_price_percent
 from assets_tracker.market.fx import fetch_rate_to_eur
 from assets_tracker.ui import theme
 from assets_tracker.ui.commodity_chart import PositionChart
+from assets_tracker.ui.exposure_widgets import (
+    ExposureSection,
+    ExposureSummary,
+    edit_exposure,
+    main_label,
+)
 from assets_tracker.ui.form_helpers import date_edit, labeled, row, to_date
 from assets_tracker.ui.formatting import (
     MINUS,
@@ -752,6 +760,7 @@ class BondsPage(QWidget):
         repository: BondRepository,
         fx: FxRepository,
         *,
+        exposure: ExposureRepository | None = None,
         today: Callable[[], date] = date.today,
         now: Callable[[], datetime] = datetime.now,
         quote_fetcher: QuoteFetcher = fetch_bond_price_percent,
@@ -762,6 +771,7 @@ class BondsPage(QWidget):
         super().__init__(parent)
         self._repository = repository
         self._fx = fx
+        self._exposure = exposure
         self._today = today
         self._now = now
         self._quote_fetcher = quote_fetcher
@@ -834,6 +844,7 @@ class BondsPage(QWidget):
         maturity_layout.addWidget(self._maturity_text, 1)
         maturity_layout.addWidget(self._maturity_button, 0, Qt.AlignmentFlag.AlignVCenter)
 
+        self._exposure_card = ExposureSummary("LA VALEUR DE MARCHÉ")
         self._ladder_card = QFrame()
         self._ladder_card.setProperty("role", "card")
         ladder_layout = QVBoxLayout(self._ladder_card)
@@ -877,6 +888,7 @@ class BondsPage(QWidget):
         layout.addWidget(self._alert)
         layout.addWidget(self._maturity)
         layout.addWidget(self._ladder_card)
+        layout.addWidget(self._exposure_card)
         layout.addLayout(self._body)
         layout.addWidget(self._empty)
         layout.addStretch(1)
@@ -955,10 +967,18 @@ class BondsPage(QWidget):
             "Prochain coupon",
             "Échéance",
             "Durée restante",
+            "Secteur principal",
+            "Zone principale",
         )
         for index, caption in enumerate(captions):
             grid.addWidget(self._tile(caption), index // 2, index % 2)
         layout.addLayout(grid)
+
+        self._exposure_section = ExposureSection()
+        self._exposure_section.edit_requested.connect(
+            lambda: self._edit_exposure(self._selected_view())
+        )
+        layout.addWidget(self._exposure_section)
 
         self._buy_button = QPushButton("Acheter")
         self._buy_button.setProperty("variant", "primary")
@@ -1037,12 +1057,15 @@ class BondsPage(QWidget):
         """Synthèse en euros : chaque obligation est convertie au dernier taux de change connu."""
         rates = self._fx.latest_rates()
         converted = []
+        weighted: list[tuple[int, Decimal]] = []
         without_rate = 0
         for v in self._views:
             rate = rate_for(v.holding.asset.currency, rates)
             if rate is None:
                 without_rate += 1
                 continue
+            if v.quote is not None and v.position.quantity > 0:
+                weighted.append((v.asset_id, v.position.quantity * v.quote.value * rate))
             converted.append(
                 bond_in_euros(v.position, v.details, v.quote.value if v.quote else None, rate)
             )
@@ -1067,6 +1090,22 @@ class BondsPage(QWidget):
         ladder = maturity_ladder(((d, p.quantity) for p, d, _ in converted), today)
         self._ladder.set_data(ladder)
         self._ladder_card.setVisible(bool(ladder))
+        self._show_exposure(weighted)
+
+    def _show_exposure(self, weighted: list[tuple[int, Decimal]]) -> None:
+        if self._exposure is None:
+            self._exposure_card.setVisible(False)
+            return
+        ids = [asset_id for asset_id, _ in weighted]
+        by_kind = {
+            kind: self._exposure.all_for(ids, kind)
+            for kind in (ExposureKind.SECTOR, ExposureKind.ZONE)
+        }
+        sectors, zones = (
+            exposure_breakdown((value, by_kind[kind][asset_id]) for asset_id, value in weighted)
+            for kind in (ExposureKind.SECTOR, ExposureKind.ZONE)
+        )
+        self._exposure_card.set_data(sectors, zones)
 
     def _show_maturity(self, today: date) -> None:
         view = next_maturity(self._views, today)
@@ -1213,6 +1252,15 @@ class BondsPage(QWidget):
         )
         self._tiles["Échéance"].setText(f"{details.maturity:%d/%m/%Y}")
         self._tiles["Durée restante"].setText(remaining_label(details.maturity, today))
+        sectors: list[ExposureEntry] = []
+        zones: list[ExposureEntry] = []
+        if self._exposure is not None:
+            sectors = self._exposure.get(view.asset_id, ExposureKind.SECTOR)
+            zones = self._exposure.get(view.asset_id, ExposureKind.ZONE)
+        self._exposure_section.setVisible(self._exposure is not None)
+        self._exposure_section.set_data(sectors, zones)
+        self._tiles["Secteur principal"].setText(main_label(sectors))
+        self._tiles["Zone principale"].setText(main_label(zones))
         self._sell_button.setEnabled(position.quantity > 0)
 
         _clear(self._operations)
@@ -1369,6 +1417,17 @@ class BondsPage(QWidget):
             break
         self.refresh()
         self.refresh_quotes()
+
+    def select(self, asset_id: int) -> None:
+        """Choisit la ligne affichée dans la fiche (appliquée à la prochaine actualisation)."""
+        self._selected = asset_id
+
+    def _edit_exposure(self, view: BondView | None) -> None:
+        if view is None or self._exposure is None:
+            return
+        if edit_exposure(self, self._exposure, view.asset_id, view.holding.asset.name):
+            self._selected = view.asset_id
+            self.refresh()
 
     def _edit_bond(self, view: BondView | None) -> None:
         if view is None:

@@ -11,11 +11,14 @@ from PySide6.QtWidgets import QDialog, QLabel
 from pytestqt.qtbot import QtBot
 
 from assets_tracker.db.connection import connect
+from assets_tracker.db.exposure_repository import ExposureRepository
 from assets_tracker.db.fx_repository import FxRepository
 from assets_tracker.db.stock_repository import StockRepository
+from assets_tracker.domain.exposure import ExposureEntry, ExposureKind
 from assets_tracker.domain.funds import ValuationSource
 from assets_tracker.domain.models import TransactionType
 from assets_tracker.domain.stocks import StockDetails
+from assets_tracker.ui.exposure_dialog import ExposureDialog
 from assets_tracker.ui.stocks_page import QuoteDialog, StockDialog, StocksPage, TradeDialog
 
 D = Decimal
@@ -49,15 +52,20 @@ def seed(repository: StockRepository) -> None:
         "Air Liquide",
         AIR_LIQUIDE,
         "EUR",
-        StockDetails("Euronext Paris", "Industrie", D("3.20"), ValuationSource.YAHOO),
+        StockDetails("Euronext Paris", D("3.20"), ValuationSource.YAHOO),
     )
     asml = repository.create(
         "ASML",
         ASML,
         "EUR",
-        StockDetails("Euronext Amsterdam", "Technologie", None, ValuationSource.MANUAL),
+        StockDetails("Euronext Amsterdam", None, ValuationSource.MANUAL),
     )
     assert air.asset.id is not None and asml.asset.id is not None
+    exposure = ExposureRepository(repository._conn)
+    exposure.replace(
+        air.asset.id, [ExposureEntry("Industrie", D(100))], [ExposureEntry("France", D(100))]
+    )
+    exposure.replace(asml.asset.id, [ExposureEntry("Technologie", D(100))], [])
     repository.add_transaction(
         air.asset.id, TransactionType.BUY, date(2026, 3, 12), D(12), D("158.40"), D(0)
     )
@@ -79,9 +87,12 @@ def add_apple(repository: StockRepository) -> None:
         "Apple",
         APPLE,
         "USD",
-        StockDetails("NASDAQ", "Technologie", D("1.04"), ValuationSource.YAHOO),
+        StockDetails("NASDAQ", D("1.04"), ValuationSource.YAHOO),
     )
     assert apple.asset.id is not None
+    ExposureRepository(repository._conn).replace(
+        apple.asset.id, [ExposureEntry("Technologie", D(100))], []
+    )
     repository.add_transaction(
         apple.asset.id, TransactionType.BUY, date(2026, 3, 5), D(15), D("182.50"), D(0)
     )
@@ -109,6 +120,7 @@ def make_page(
     page = StocksPage(
         repository,
         FxRepository(repository._conn),
+        exposure=ExposureRepository(repository._conn),
         today=lambda: TODAY,
         now=lambda: NOW,
         quote_fetcher=quotes or Quotes({}),
@@ -158,13 +170,18 @@ def test_table_has_five_columns_and_no_weight_or_fees(page: StocksPage) -> None:
     assert "—" in page._table.cellWidget(0, 3).text()  # ASML : dividende inconnu
 
 
-def test_sector_breakdown_card(page: StocksPage) -> None:
-    legend = page._sector_legend.text()
+def test_exposure_card_weights_sectors_and_zones_by_value(page: StocksPage) -> None:
+    sectors = page._exposure_card.legend_text(ExposureKind.SECTOR)
+    zones = page._exposure_card.legend_text(ExposureKind.ZONE)
 
-    assert not page._sector_card.isHidden()
-    assert f"Industrie <b>59,3{NBSP}%</b>" in legend
-    assert f"Technologie <b>40,7{NBSP}%</b>" in legend
-    assert legend.index("Industrie") < legend.index("Technologie")
+    assert not page._exposure_card.isHidden()
+    assert f"Industrie <b>59,3{NBSP}%</b>" in sectors
+    assert f"Technologie <b>40,7{NBSP}%</b>" in sectors
+    assert sectors.index("Industrie") < sectors.index("Technologie")
+    # seule Air Liquide a une zone : ASML tombe dans « Non classé », toujours en dernier
+    assert f"France <b>59,3{NBSP}%</b>" in zones
+    assert f"Non classé <b>40,7{NBSP}%</b>" in zones
+    assert zones.index("France") < zones.index("Non classé")
 
 
 def test_old_quote_is_flagged_in_the_alert(page: StocksPage) -> None:
@@ -189,7 +206,8 @@ def test_detail_of_the_selected_stock(page: StocksPage) -> None:
     assert page._tiles["Rendement"].text() == f"1,87{NBSP}%"
     assert page._tiles["Dividendes annuels"].text() == f"38,40{NBSP}€"
     assert page._tiles["Devise"].text() == "EUR"
-    assert page._tiles["Secteur"].text() == "Industrie"
+    assert page._tiles["Secteur principal"].text() == f"Industrie · 100{NBSP}%"
+    assert page._tiles["Zone principale"].text() == f"France · 100{NBSP}%"
     assert page._tiles["Place"].text() == "Euronext Paris"
     assert page._edit_button.text() == "Modifier l'action…"
 
@@ -224,7 +242,7 @@ def test_empty_page_invites_to_create_a_stock(qtbot: QtBot, repository: StockRep
 
     assert not page._empty.isHidden()
     assert page._table.isHidden() and page._detail.isHidden()
-    assert page._alert.isHidden() and page._sector_card.isHidden()
+    assert page._alert.isHidden() and page._exposure_card.isHidden()
     assert page._value_card._value.text() == f"0,00{NBSP}€"
 
 
@@ -286,6 +304,7 @@ def test_a_provider_error_never_breaks_the_page(qtbot: QtBot, repository: StockR
     page = StocksPage(
         repository,
         FxRepository(repository._conn),
+        exposure=ExposureRepository(repository._conn),
         today=lambda: TODAY,
         now=lambda: NOW,
         quote_fetcher=failing,
@@ -341,12 +360,11 @@ def test_stock_dialog_builds_details_with_yahoo_as_the_default_source(qtbot: QtB
     dialog._name.setText("TotalEnergies")
     dialog._ticker.setText("TTE.PA")
     dialog._place.setText("Euronext Paris")
-    dialog._sector.setText("Énergie")
 
     name, ticker, currency, details = dialog.form()
 
     assert (name, ticker, currency) == ("TotalEnergies", "TTE.PA", "EUR")
-    assert details == StockDetails("Euronext Paris", "Énergie", None, ValuationSource.YAHOO)
+    assert details == StockDetails("Euronext Paris", None, ValuationSource.YAHOO)
 
     dialog._dividend.setText("3,28")
     assert dialog.form()[3].dividend == D("3.28")
@@ -373,7 +391,6 @@ def test_new_stock_flow_adds_a_row(
     def fill(self: StockDialog) -> QDialog.DialogCode:
         self._name.setText("TotalEnergies")
         self._ticker.setText("tte.pa")
-        self._sector.setText("Énergie")
         return QDialog.DialogCode.Accepted
 
     monkeypatch.setattr(StockDialog, "exec", fill)
@@ -546,7 +563,7 @@ def test_summary_converts_foreign_stocks_with_the_cached_rate(
     assert page._value_card._sub.text().endswith("converti en EUR")
     assert page._gain_card._value.text() == f"+520,10{NBSP}€"
     assert page._dividend_card._value.text() == f"46,20{NBSP}€"  # 38,40 + 15 × 1,04 $ × 0,5
-    assert "Technologie <b>" in page._sector_legend.text()
+    assert "Technologie <b>" in page._exposure_card.legend_text(ExposureKind.SECTOR)
     page._table.setCurrentCell(row_of(page, "Apple"), 0)
     assert page._d_value.text() == f"3{NNBSP}424,50{NBSP}$"  # la fiche reste en dollars
     assert page._d_euros.text() == f"≈ 1{NNBSP}712,25{NBSP}€ · 1 USD = 0,50{NBSP}€"
@@ -579,3 +596,32 @@ def test_refresh_stores_the_rate_once_a_day(qtbot: QtBot, repository: StockRepos
     cached = FxRepository(repository._conn).latest("USD")
     assert cached is not None and (cached.rate, cached.rate_date) == (D("0.5"), TODAY)
     assert page._value_card._value.text() == f"5{NNBSP}174,65{NBSP}€"
+
+
+def test_edit_exposure_flow_saves_and_refreshes(
+    page: StocksPage, repository: StockRepository, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def fill(self: ExposureDialog) -> QDialog.DialogCode:
+        self._sectors.set_entries(
+            [ExposureEntry("Chimie", D(70)), ExposureEntry("Industrie", D(30))]
+        )
+        self._zones.set_entries([ExposureEntry("Europe", D(100))])
+        return QDialog.DialogCode.Accepted
+
+    monkeypatch.setattr(ExposureDialog, "exec", fill)
+    page._table.setCurrentCell(row_of(page, "Air Liquide"), 0)
+
+    page._edit_exposure(page._selected_view())
+
+    section = page._exposure_section
+    assert "Chimie" in section.legend_text(ExposureKind.SECTOR)
+    assert "Europe" in section.legend_text(ExposureKind.ZONE)
+    assert page._tiles["Secteur principal"].text() == f"Chimie · 70{NBSP}%"
+    assert "Chimie" in page._exposure_card.legend_text(ExposureKind.SECTOR)
+
+
+def test_fiche_says_when_nothing_is_filled_in(page: StocksPage) -> None:
+    page._table.setCurrentCell(row_of(page, "ASML"), 0)
+
+    assert "non renseignées" in page._exposure_section.legend_text(ExposureKind.ZONE)
+    assert page._tiles["Zone principale"].text() == "—"

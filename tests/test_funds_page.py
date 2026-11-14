@@ -12,9 +12,12 @@ from PySide6.QtWidgets import QDialog, QLabel
 from pytestqt.qtbot import QtBot
 
 from assets_tracker.db.connection import connect
+from assets_tracker.db.exposure_repository import ExposureRepository
 from assets_tracker.db.fund_repository import FundRepository
+from assets_tracker.domain.exposure import ExposureEntry, ExposureKind
 from assets_tracker.domain.funds import FundDetails, ValuationSource
 from assets_tracker.domain.models import TransactionType
+from assets_tracker.ui.exposure_dialog import ExposureDialog
 from assets_tracker.ui.funds_page import FundDialog, FundsPage, NavDialog, TradeDialog
 
 D = Decimal
@@ -62,7 +65,12 @@ def seed(repository: FundRepository) -> None:
 
 
 def make_page(qtbot: QtBot, repository: FundRepository) -> FundsPage:
-    page = FundsPage(repository, today=lambda: TODAY, now=lambda: NOW)
+    page = FundsPage(
+        repository,
+        exposure=ExposureRepository(repository._conn),
+        today=lambda: TODAY,
+        now=lambda: NOW,
+    )
     qtbot.addWidget(page)
     page.resize(1200, 900)
     return page
@@ -369,3 +377,28 @@ def test_nav_dialog_returns_the_date_and_value(
     dialog._date.setDate(QDate(2026, 11, 14))
     with pytest.raises(ValueError):
         dialog.form()
+
+
+def test_edit_exposure_weights_the_summary_by_fund_value(
+    page: FundsPage, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repository = ExposureRepository(page._repository._conn)
+    world, bonds = page._views[0].asset_id, page._views[1].asset_id
+    repository.replace(world, [ExposureEntry("Technologie", D(100))], [])
+    repository.replace(bonds, [ExposureEntry("États", D(100))], [])
+
+    def fill(self: ExposureDialog) -> QDialog.DialogCode:
+        self._sectors.set_entries(
+            [ExposureEntry("Technologie", D(50)), ExposureEntry("Santé", D(50))]
+        )
+        self._zones.set_entries([ExposureEntry("Monde", D(100))])
+        return QDialog.DialogCode.Accepted
+
+    monkeypatch.setattr(ExposureDialog, "exec", fill)
+    page._selected = world
+
+    page._edit_exposure(page._selected_view())
+
+    assert page._tiles["Zone principale"].text() == f"Monde · 100{NBSP}%"
+    legend = page._exposure_card.legend_text(ExposureKind.SECTOR)
+    assert "Technologie" in legend and "Santé" in legend and "États" in legend

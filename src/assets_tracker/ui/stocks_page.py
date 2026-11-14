@@ -1,4 +1,4 @@
-"""Écran des actions : synthèse en euros, répartition par secteur, liste, fiche, achat et vente."""
+"""Écran des actions : synthèse en euros, secteurs et zones, liste, fiche, achat et vente."""
 
 from __future__ import annotations
 
@@ -8,8 +8,8 @@ from datetime import date, datetime
 from decimal import Decimal
 from html import escape
 
-from PySide6.QtCore import QRectF, Qt, QThreadPool
-from PySide6.QtGui import QColor, QPainter, QPaintEvent, QResizeEvent
+from PySide6.QtCore import Qt, QThreadPool
+from PySide6.QtGui import QResizeEvent
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QBoxLayout,
@@ -31,8 +31,10 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from assets_tracker.db.exposure_repository import ExposureRepository
 from assets_tracker.db.fx_repository import FxRepository
 from assets_tracker.db.stock_repository import StockHolding, StockRepository
+from assets_tracker.domain.exposure import ExposureEntry, ExposureKind, exposure_breakdown
 from assets_tracker.domain.funds import FundValue, ValuationSource
 from assets_tracker.domain.fx import currencies_to_refresh, rate_for
 from assets_tracker.domain.models import Position, Transaction, TransactionType
@@ -45,7 +47,6 @@ from assets_tracker.domain.stocks import (
     is_quote_stale,
     price_change,
     price_series,
-    sector_breakdown,
     stock_in_euros,
     stock_totals,
     stock_trade_quote,
@@ -74,6 +75,12 @@ from assets_tracker.ui.bonds_page import (
     fetch_rates,
 )
 from assets_tracker.ui.commodity_chart import PositionChart
+from assets_tracker.ui.exposure_widgets import (
+    ExposureSection,
+    ExposureSummary,
+    edit_exposure,
+    main_label,
+)
 from assets_tracker.ui.form_helpers import date_edit, labeled, row, to_date
 from assets_tracker.ui.formatting import (
     MINUS,
@@ -161,41 +168,6 @@ def _pct(value: Decimal | None, places: int = 2) -> str:
     return "—" if value is None else f"{format_number(value, places)}{NBSP}%"
 
 
-# --- Répartition par secteur ---------------------------------------------------
-
-
-class SectorBar(QWidget):
-    """Barre empilée de la part de chaque secteur, avec sa légende."""
-
-    def __init__(self, parent: QWidget | None = None) -> None:
-        super().__init__(parent)
-        self._parts: list[tuple[str, Decimal, Decimal]] = []
-        self.setFixedHeight(14)
-        self.setAccessibleName("Répartition par secteur")
-
-    def set_data(self, parts: list[tuple[str, Decimal, Decimal]]) -> None:
-        self._parts = parts
-        self.setAccessibleDescription(
-            ". ".join(f"{name} : {format_number(percent, 1)} %" for name, _, percent in parts)
-        )
-        self.update()
-
-    def paintEvent(self, event: QPaintEvent) -> None:  # noqa: N802 (API Qt)
-        if not self._parts:
-            return
-        painter = QPainter(self)
-        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-        painter.setPen(Qt.PenStyle.NoPen)
-        gap = 2.0
-        usable = max(1.0, self.width() - gap * (len(self._parts) - 1))
-        x = 0.0
-        for index, (_, _, percent) in enumerate(self._parts):
-            width = usable * float(percent) / 100
-            painter.setBrush(QColor(theme.SERIES[index % len(theme.SERIES)]))
-            painter.drawRoundedRect(QRectF(x, 0, max(width, 1.0), self.height()), 4, 4)
-            x += width + gap
-
-
 # --- Dialogues --------------------------------------------------------------
 
 
@@ -209,7 +181,7 @@ class StockDialog(_ValidatedDialog):
         self.setMinimumWidth(560)
         self._name, self._ticker = QLineEdit(), QLineEdit()
         self._currency, self._place = QLineEdit("EUR"), QLineEdit()
-        self._sector, self._dividend = QLineEdit(), QLineEdit()
+        self._dividend = QLineEdit()
         hint = QLabel(
             "Le cours est récupéré automatiquement via Yahoo à partir du ticker. S'il est "
             "introuvable, vous serez invité à le saisir à la main, avec une alerte s'il date de "
@@ -231,12 +203,7 @@ class StockDialog(_ValidatedDialog):
                 labeled("Devise", self._currency, "Convertie en EUR dans les synthèses"),
             )
         )
-        layout.addWidget(
-            row(
-                labeled("Place de cotation", self._place),
-                labeled("Secteur", self._sector),
-            )
-        )
+        layout.addWidget(labeled("Place de cotation", self._place))
         layout.addWidget(
             labeled("Dividende annuel par action", self._dividend, "Optionnel, dans la devise")
         )
@@ -252,7 +219,6 @@ class StockDialog(_ValidatedDialog):
         self._ticker.setText(holding.asset.symbol)
         self._currency.setText(holding.asset.currency)
         self._place.setText(details.place)
-        self._sector.setText(details.sector)
         dividend = details.dividend
         self._dividend.setText("" if dividend is None else format_quantity(dividend))
 
@@ -266,7 +232,7 @@ class StockDialog(_ValidatedDialog):
             self._name.text(),
             self._ticker.text(),
             self._currency.text(),
-            StockDetails(self._place.text(), self._sector.text(), dividend, self._source),
+            StockDetails(self._place.text(), dividend, self._source),
         )
 
 
@@ -558,6 +524,7 @@ class StocksPage(QWidget):
         repository: StockRepository,
         fx: FxRepository,
         *,
+        exposure: ExposureRepository | None = None,
         today: Callable[[], date] = date.today,
         now: Callable[[], datetime] = datetime.now,
         quote_fetcher: QuoteFetcher = fetch_stock_price,
@@ -568,6 +535,7 @@ class StocksPage(QWidget):
         super().__init__(parent)
         self._repository = repository
         self._fx = fx
+        self._exposure = exposure
         self._today = today
         self._now = now
         self._quote_fetcher = quote_fetcher
@@ -622,20 +590,7 @@ class StocksPage(QWidget):
         alert_layout.addWidget(self._alert_text, 1)
         alert_layout.addWidget(alert_button, 0, Qt.AlignmentFlag.AlignVCenter)
 
-        self._sector_card = QFrame()
-        self._sector_card.setProperty("role", "card")
-        sector_layout = QVBoxLayout(self._sector_card)
-        sector_layout.setContentsMargins(20, 18, 20, 18)
-        sector_layout.setSpacing(12)
-        sector_caption = QLabel("RÉPARTITION PAR SECTEUR · PART DE LA VALEUR DE MARCHÉ, EN EUR")
-        sector_caption.setProperty("role", "caption")
-        self._sector_bar = SectorBar()
-        self._sector_legend = QLabel()
-        self._sector_legend.setTextFormat(Qt.TextFormat.RichText)
-        self._sector_legend.setWordWrap(True)
-        sector_layout.addWidget(sector_caption)
-        sector_layout.addWidget(self._sector_bar)
-        sector_layout.addWidget(self._sector_legend)
+        self._exposure_card = ExposureSummary("LA VALEUR DE MARCHÉ")
 
         self._table = QTableWidget()
         self._table.setAccessibleName("Actions détenues")
@@ -667,7 +622,7 @@ class StocksPage(QWidget):
         layout.addLayout(header)
         layout.addLayout(cards)
         layout.addWidget(self._alert)
-        layout.addWidget(self._sector_card)
+        layout.addWidget(self._exposure_card)
         layout.addLayout(self._body)
         layout.addWidget(self._empty)
         layout.addStretch(1)
@@ -747,12 +702,19 @@ class StocksPage(QWidget):
             "Rendement",
             "Dividendes annuels",
             "Devise",
-            "Secteur",
+            "Secteur principal",
+            "Zone principale",
             "Place",
         )
         for index, caption in enumerate(captions):
             grid.addWidget(self._tile(caption), index // 2, index % 2)
         layout.addLayout(grid)
+
+        self._exposure_section = ExposureSection()
+        self._exposure_section.edit_requested.connect(
+            lambda: self._edit_exposure(self._selected_view())
+        )
+        layout.addWidget(self._exposure_section)
 
         self._buy_button = QPushButton("Acheter")
         self._buy_button.setProperty("variant", "primary")
@@ -838,7 +800,7 @@ class StocksPage(QWidget):
         """Synthèse en euros : chaque action est convertie au dernier taux de change connu."""
         rates = self._fx.latest_rates()
         converted = []
-        sectors: list[tuple[str, Decimal]] = []
+        weighted: list[tuple[int, Decimal]] = []
         without_rate = 0
         for v in self._views:
             rate = rate_for(v.currency, rates)
@@ -848,7 +810,7 @@ class StocksPage(QWidget):
             price = v.quote.value if v.quote else None
             converted.append(stock_in_euros(v.position, v.details, price, rate))
             if price is not None and v.position.quantity > 0:
-                sectors.append((v.details.sector, v.position.quantity * price * rate))
+                weighted.append((v.asset_id, v.position.quantity * price * rate))
         totals = stock_totals(converted)
         notes = ["Cours × actions"]
         if totals.unvalued:
@@ -866,16 +828,22 @@ class StocksPage(QWidget):
         self._dividend_card.set(
             money(totals.dividends, CURRENCY), f"Rendement {_pct(totals.dividend_yield)}"
         )
-        parts = sector_breakdown(sectors)
-        self._sector_bar.set_data(parts)
-        self._sector_legend.setText(
-            "&nbsp;&nbsp;&nbsp;".join(
-                f"<span style='color:{theme.SERIES[index % len(theme.SERIES)]}'>■</span> "
-                f"{escape(name)} <b>{_pct(percent, 1)}</b>"
-                for index, (name, _, percent) in enumerate(parts)
-            )
+        self._show_exposure(weighted)
+
+    def _show_exposure(self, weighted: list[tuple[int, Decimal]]) -> None:
+        if self._exposure is None:
+            self._exposure_card.setVisible(False)
+            return
+        ids = [asset_id for asset_id, _ in weighted]
+        by_kind = {
+            kind: self._exposure.all_for(ids, kind)
+            for kind in (ExposureKind.SECTOR, ExposureKind.ZONE)
+        }
+        sectors, zones = (
+            exposure_breakdown((value, by_kind[kind][asset_id]) for asset_id, value in weighted)
+            for kind in (ExposureKind.SECTOR, ExposureKind.ZONE)
         )
-        self._sector_card.setVisible(bool(parts))
+        self._exposure_card.set_data(sectors, zones)
 
     def _fill_table(self) -> None:
         self._table.blockSignals(True)
@@ -944,8 +912,7 @@ class StocksPage(QWidget):
         today = self._today()
         self._d_name.setText(asset.name)
         place = f" · {details.place}" if details.place else ""
-        sector = f" · {details.sector}" if details.sector else ""
-        self._d_sub.setText(f"{asset.symbol}{place}{sector}")
+        self._d_sub.setText(f"{asset.symbol}{place}")
 
         source = SOURCE_LABELS[details.valuation_source]
         if view.quote is None:
@@ -1011,7 +978,15 @@ class StocksPage(QWidget):
             "—" if annual is None else money(annual, currency)
         )
         self._tiles["Devise"].setText(currency)
-        self._tiles["Secteur"].setText(details.sector or "—")
+        sectors: list[ExposureEntry] = []
+        zones: list[ExposureEntry] = []
+        if self._exposure is not None:
+            sectors = self._exposure.get(view.asset_id, ExposureKind.SECTOR)
+            zones = self._exposure.get(view.asset_id, ExposureKind.ZONE)
+        self._exposure_section.setVisible(self._exposure is not None)
+        self._exposure_section.set_data(sectors, zones)
+        self._tiles["Secteur principal"].setText(main_label(sectors))
+        self._tiles["Zone principale"].setText(main_label(zones))
         self._tiles["Place"].setText(details.place or "—")
         self._sell_button.setEnabled(position.quantity > 0)
 
@@ -1154,6 +1129,17 @@ class StocksPage(QWidget):
         if 0 <= current_row < len(self._views):
             self._selected = self._views[current_row].asset_id
             self._show_selected()
+
+    def select(self, asset_id: int) -> None:
+        """Choisit la ligne affichée dans la fiche (appliquée à la prochaine actualisation)."""
+        self._selected = asset_id
+
+    def _edit_exposure(self, view: StockView | None) -> None:
+        if view is None or self._exposure is None:
+            return
+        if edit_exposure(self, self._exposure, view.asset_id, view.holding.asset.name):
+            self._selected = view.asset_id
+            self.refresh()
 
     def _new_stock(self) -> None:
         dialog = StockDialog(self)

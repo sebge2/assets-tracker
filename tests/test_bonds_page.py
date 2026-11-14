@@ -13,11 +13,14 @@ from pytestqt.qtbot import QtBot
 
 from assets_tracker.db.bond_repository import BondRepository
 from assets_tracker.db.connection import connect
+from assets_tracker.db.exposure_repository import ExposureRepository
 from assets_tracker.db.fx_repository import FxRepository
 from assets_tracker.domain.bonds import BondDetails, CouponFrequency
+from assets_tracker.domain.exposure import ExposureEntry
 from assets_tracker.domain.funds import ValuationSource
 from assets_tracker.domain.models import TransactionType
 from assets_tracker.ui.bonds_page import BondDialog, BondsPage, QuoteDialog, TradeDialog
+from assets_tracker.ui.exposure_dialog import ExposureDialog
 
 D = Decimal
 TODAY = date(2026, 11, 13)
@@ -102,6 +105,7 @@ def make_page(
     page = BondsPage(
         repository,
         FxRepository(repository._conn),
+        exposure=ExposureRepository(repository._conn),
         today=lambda: TODAY,
         now=lambda: NOW,
         quote_fetcher=quotes or Quotes({}),
@@ -723,3 +727,20 @@ def test_a_failed_rate_keeps_the_previous_one(qtbot: QtBot, repository: BondRepo
     cached = FxRepository(repository._conn).latest("USD")
     assert cached is not None and cached.rate_date == date(2026, 11, 1)
     assert page._value_card._value.text() == f"20{NNBSP}548,00{NBSP}€"
+
+
+def test_edit_exposure_updates_the_fiche_and_the_summary_card(
+    page: BondsPage, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def fill(self: ExposureDialog) -> QDialog.DialogCode:
+        self._sectors.set_entries([ExposureEntry("États", D(100))])
+        self._zones.set_entries([ExposureEntry("France", D(80)), ExposureEntry("Europe", D(20))])
+        return QDialog.DialogCode.Accepted
+
+    monkeypatch.setattr(ExposureDialog, "exec", fill)
+
+    page._edit_exposure(page._selected_view())
+
+    assert page._tiles["Secteur principal"].text() == f"États · 100{NBSP}%"
+    assert page._tiles["Zone principale"].text() == f"France · 80{NBSP}%"
+    assert not page._exposure_card.isHidden()
