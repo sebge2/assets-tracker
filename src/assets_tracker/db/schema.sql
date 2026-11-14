@@ -174,10 +174,3 @@ CREATE TABLE IF NOT EXISTS term_note_details (
     repaid_capital   TEXT,
     repaid_interest  TEXT
 );
-
--- Configuration de l'application : paires clé/valeur (ex. clé d'API de Financial Modeling Prep).
--- La base est chiffrée (SQLCipher) : les secrets y sont stockés comme le reste des données.
-CREATE TABLE IF NOT EXISTS settings (
-    key   TEXT PRIMARY KEY,
-    value TEXT NOT NULL
-);

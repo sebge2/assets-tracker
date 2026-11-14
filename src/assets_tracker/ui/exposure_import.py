@@ -94,7 +94,7 @@ class ExposureImporter(QObject):
     def import_now(
         self, asset_id: int, symbol: str, fetcher: ExposureFetcher | None = None
     ) -> None:
-        """Lance l'import ; `fetcher` remplace la source par défaut (ex. FMP avec sa clé)."""
+        """Lance l'import ; `fetcher` remplace la source par défaut."""
         if self.busy:
             return
         source = fetcher or self._fetcher

@@ -36,9 +36,7 @@ from PySide6.QtWidgets import (
 
 from assets_tracker.db.exposure_repository import ExposureRepository
 from assets_tracker.db.fund_repository import FundHolding, FundRepository
-from assets_tracker.db.settings_repository import FMP_API_KEY, SettingsRepository
 from assets_tracker.domain.exposure import ExposureEntry, ExposureKind, exposure_breakdown
-from assets_tracker.domain.exposure_import import RawExposure
 from assets_tracker.domain.funds import (
     FundDetails,
     FundValue,
@@ -55,7 +53,6 @@ from assets_tracker.domain.models import Position, Transaction, TransactionType
 from assets_tracker.domain.positions import compute_position
 from assets_tracker.domain.valuation import Valuation
 from assets_tracker.market.exposure import ExposureFetcher
-from assets_tracker.market.fmp import fetch_fund_exposure
 from assets_tracker.market.stocks import fetch_stock_price
 from assets_tracker.ui import theme
 from assets_tracker.ui.commodity_chart import PositionChart
@@ -146,10 +143,6 @@ def alert_message(pending: list[FundView], today: date) -> str:
     if others:
         text += f" {others} autre{'s' if others > 1 else ''} fonds à mettre à jour."
     return text
-
-
-def _no_source(symbol: str) -> RawExposure | None:
-    return None
 
 
 def _yahoo_symbol(holding: FundHolding) -> str | None:
@@ -584,8 +577,6 @@ class FundsPage(QWidget):
         *,
         exposure: ExposureRepository | None = None,
         exposure_fetcher: ExposureFetcher | None = None,
-        settings: SettingsRepository | None = None,
-        fund_fetcher: Callable[[str, str], RawExposure | None] = fetch_fund_exposure,
         nav_fetcher: Callable[[str, str], Decimal | None] = fetch_stock_price,
         today: Callable[[], date] = date.today,
         now: Callable[[], datetime] = datetime.now,
@@ -595,14 +586,12 @@ class FundsPage(QWidget):
         super().__init__(parent)
         self._repository = repository
         self._exposure = exposure
-        self._settings = settings
-        self._fund_fetcher = fund_fetcher
         self._nav_fetcher = nav_fetcher
         self._background = background
         self._importer: ExposureImporter | None = None
-        if exposure is not None and (exposure_fetcher is not None or settings is not None):
+        if exposure is not None and exposure_fetcher is not None:
             self._importer = ExposureImporter(
-                exposure, exposure_fetcher or _no_source, background=background, parent=self
+                exposure, exposure_fetcher, background=background, parent=self
             )
             self._importer.changed.connect(self.refresh)
             self._importer.manual_finished.connect(self._on_import_finished)
@@ -1073,32 +1062,18 @@ class FundsPage(QWidget):
         symbol = _yahoo_symbol(view.holding)
         if not symbol:
             QMessageBox.information(
-                self, "Import impossible", "Cet actif n'a pas de symbole de cotation."
+                self, "Import impossible", "Cet actif n'a pas de symbole Yahoo."
             )
             return
-        fetcher: ExposureFetcher | None = None
-        source = "Yahoo"
-        if self._settings is not None:
-            api_key = self._settings.get(FMP_API_KEY)
-            if not api_key:
-                QMessageBox.information(
-                    self,
-                    "Clé FMP manquante",
-                    "Renseignez votre clé d'API Financial Modeling Prep dans « Paramètres ».",
-                )
-                return
-            source = "FMP"
-            fetcher = partial(self._fund_fetcher, api_key=api_key)
         if any(self._exposure.get(view.asset_id, kind) for kind in ExposureKind):
             answer = QMessageBox.question(
                 self,
-                f"Importer depuis {source}",
-                f"Les répartitions fournies par {source} remplaceront celles déjà saisies. "
-                "Continuer ?",
+                "Importer depuis Yahoo",
+                "Les répartitions fournies par Yahoo remplaceront celles déjà saisies. Continuer ?",
             )
             if answer != QMessageBox.StandardButton.Yes:
                 return
-        self._importer.import_now(view.asset_id, symbol, fetcher)
+        self._importer.import_now(view.asset_id, symbol)
 
     def _on_import_failed(self, message: str) -> None:
         QMessageBox.critical(self, "Import impossible", message)
@@ -1108,7 +1083,7 @@ class FundsPage(QWidget):
             QMessageBox.information(
                 self,
                 "Import impossible",
-                "La source ne fournit pas de répartition pour cet actif. "
+                "Yahoo ne fournit pas de répartition pour cet actif. "
                 "Saisissez-la avec « Modifier ».",
             )
 

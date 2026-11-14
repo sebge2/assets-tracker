@@ -1,6 +1,6 @@
 # AGENTS.md
 
-Assets Tracker — application desktop locale de suivi de portefeuille. Les données restent sur la machine ; Internet n'est utilisé que pour récupérer des cours et des répartitions (Yahoo, Financial Modeling Prep).
+Assets Tracker — application desktop locale de suivi de portefeuille. Les données restent sur la machine ; Internet n'est utilisé que pour récupérer des cours et des répartitions (Yahoo).
 
 ## Stack
 
@@ -124,11 +124,8 @@ mypy src                         # typage strict
   - **Portefeuille** : un bon y entre comme une position d'un titre (`portfolio_transactions` : achat du capital à la souscription, vente au remboursement au prix capital + intérêts reçus ; `portfolio_prices` : valeur en fin de mois et aujourd'hui). La plus-value latente est donc les intérêts courus, la plus-value réalisée les intérêts encaissés. `PortfolioPage(term_notes=…)` est optionnel. La carte de répartition ajoute le périmètre « Bons de caisse » ; un bon remboursé en est exclu.
   - **Exposition** : secteurs et zones comme les autres actifs (`asset_exposures`, supprimés avec le bon), pondérés par la valeur actuelle.
 
-## Paramètres et FMP
-- Table `settings(key, value)` (clé/valeur, `db/settings_repository.py` : `get`, `set` — valeur vide = suppression —, `delete`, `all`) ; la clé d'API FMP est `FMP_API_KEY`, stockée dans la base chiffrée. Écran « Paramètres » (`ui/settings_page.py`, dernier élément du menu) : saisie masquée, Enregistrer / Tester / Effacer.
-- `market/fmp.py` : secteurs et pays d'un fonds (`etf/sector-weightings`, `etf/country-weightings`), `check_api_key`. Contrairement à Yahoo, il **lève `ExposureError`** avec un message lisible (clé refusée, quota, réseau) qui n'inclut jamais la clé. La clé est lue en base dans le thread principal puis passée au fetcher (`partial(..., api_key=…)`) : jamais d'accès SQLite dans le thread de fond.
-- L'import des **fonds** passe par FMP (clé requise, sinon message vers Paramètres) ; les **actions** essaient Yahoo d'abord, puis FMP (`profile` : secteur + code pays ISO) seulement si Yahoo n'a rien et qu'une clé est configurée (`fetch_with_fallback`). Les pays de FMP sont regroupés en zones (inconnus → « Autre »).
-- Tout appel réseau déclenché par l'utilisateur affiche un `Spinner` (`ui/spinner.py`) et toute erreur une popup `QMessageBox.critical` (`ExposureImporter.busy_changed` / `failed`, `SettingsPage`).
+## Retour utilisateur des appels réseau
+Tout appel réseau déclenché par l'utilisateur affiche un `Spinner` (`ui/spinner.py`) et toute erreur une popup `QMessageBox.critical` : import des secteurs et zones (`ExposureImporter.busy_changed` / `failed`, `ExposureError` levée par la source) et bouton « Récupérer depuis Yahoo » des fenêtres de cours.
 
 ## Devise des cours Yahoo
 Yahoo peut coter un titre dans une autre devise que celle de l'instrument (ex. un titre coté en USD suivi en EUR). `market/stocks.fetch_stock_price(symbol, currency)` lit la devise de cotation (`fast_info["currency"]`) et convertit au taux du jour (`USDEUR=X`) vers la devise de l'actif ; sous-unités `GBp`/`GBX`/`ZAc`/`ILA` ramenées à l'unité principale. Si le taux manque, aucun cours n'est enregistré (le dernier cours connu reste affiché). Les obligations (cours en % du nominal) ne sont pas converties.

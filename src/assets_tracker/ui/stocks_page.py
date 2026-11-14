@@ -34,10 +34,8 @@ from PySide6.QtWidgets import (
 
 from assets_tracker.db.exposure_repository import ExposureRepository
 from assets_tracker.db.fx_repository import FxRepository
-from assets_tracker.db.settings_repository import FMP_API_KEY, SettingsRepository
 from assets_tracker.db.stock_repository import StockHolding, StockRepository
 from assets_tracker.domain.exposure import ExposureEntry, ExposureKind, exposure_breakdown
-from assets_tracker.domain.exposure_import import RawExposure
 from assets_tracker.domain.funds import FundValue, ValuationSource
 from assets_tracker.domain.fx import currencies_to_refresh, rate_for
 from assets_tracker.domain.models import Position, Transaction, TransactionType
@@ -79,7 +77,6 @@ from assets_tracker.ui.bonds_page import (
 )
 from assets_tracker.ui.commodity_chart import PositionChart
 from assets_tracker.market.exposure import ExposureFetcher
-from assets_tracker.market.fmp import fetch_stock_exposure, fetch_with_fallback
 from assets_tracker.ui.exposure_import import ExposureImporter
 from assets_tracker.ui.exposure_widgets import (
     ExposureSection,
@@ -573,8 +570,6 @@ class StocksPage(QWidget):
         *,
         exposure: ExposureRepository | None = None,
         exposure_fetcher: ExposureFetcher | None = None,
-        settings: SettingsRepository | None = None,
-        stock_fallback: Callable[[str, str], RawExposure | None] = fetch_stock_exposure,
         today: Callable[[], date] = date.today,
         now: Callable[[], datetime] = datetime.now,
         quote_fetcher: QuoteFetcher | None = None,
@@ -586,9 +581,6 @@ class StocksPage(QWidget):
         self._repository = repository
         self._fx = fx
         self._exposure = exposure
-        self._settings = settings
-        self._yahoo_fetcher = exposure_fetcher
-        self._stock_fallback = stock_fallback
         self._importer: ExposureImporter | None = None
         if exposure is not None and exposure_fetcher is not None:
             self._importer = ExposureImporter(
@@ -1217,31 +1209,18 @@ class StocksPage(QWidget):
         symbol = view.holding.asset.symbol
         if not symbol:
             QMessageBox.information(
-                self, "Import impossible", "Cet actif n'a pas de symbole de cotation."
+                self, "Import impossible", "Cet actif n'a pas de symbole Yahoo."
             )
             return
-        # Yahoo d'abord ; FMP seulement s'il n'a rien et qu'une clé est configurée (lue ici,
-        # dans le thread principal : le thread de fond n'accède jamais à la base).
-        fetcher: ExposureFetcher | None = None
-        api_key = self._settings.get(FMP_API_KEY) if self._settings is not None else None
-        if api_key and self._yahoo_fetcher is not None:
-            fetcher = partial(
-                fetch_with_fallback,
-                primary=self._yahoo_fetcher,
-                api_key=api_key,
-                fallback=self._stock_fallback,
-            )
-        source = "Yahoo ou FMP" if api_key else "Yahoo"
         if any(self._exposure.get(view.asset_id, kind) for kind in ExposureKind):
             answer = QMessageBox.question(
                 self,
-                f"Importer depuis {source}",
-                f"Les répartitions fournies par {source} remplaceront celles déjà saisies. "
-                "Continuer ?",
+                "Importer depuis Yahoo",
+                "Les répartitions fournies par Yahoo remplaceront celles déjà saisies. Continuer ?",
             )
             if answer != QMessageBox.StandardButton.Yes:
                 return
-        self._importer.import_now(view.asset_id, symbol, fetcher)
+        self._importer.import_now(view.asset_id, symbol)
 
     def _on_import_failed(self, message: str) -> None:
         QMessageBox.critical(self, "Import impossible", message)
@@ -1251,7 +1230,7 @@ class StocksPage(QWidget):
             QMessageBox.information(
                 self,
                 "Import impossible",
-                "Aucune source ne fournit de répartition pour cet actif. "
+                "Yahoo ne fournit pas de répartition pour cet actif. "
                 "Saisissez-la avec « Modifier ».",
             )
 

@@ -18,8 +18,6 @@ _PATHS = {
     "bond": '<rect x="5" y="3" width="14" height="18" rx="2"/><path d="M9 8h6M9 12h6M9 16h3"/>',
     "term_note": '<rect x="4" y="3" width="16" height="18" rx="2"/><path d="M8 8h8M8 12h5"/>'
     '<circle cx="15.5" cy="16.5" r="2.5"/><path d="M15.5 15.5v1.2l.8.5"/>',
-    "settings": '<circle cx="12" cy="12" r="3"/><path d="M12 3v3M12 18v3M3 12h3M18 12h3'
-    'M5.6 5.6l2.1 2.1M16.3 16.3l2.1 2.1M18.4 5.6l-2.1 2.1M7.7 16.3l-2.1 2.1"/>',
     "stock": '<path d="M3 17l6-6 4 4 8-8"/><path d="M15 7h6v6"/>',
     "edit": '<path d="M4 20h4L19 9l-4-4L4 16zM13.5 6.5l4 4"/>',
     "delete": '<path d="M4 7h16M10 11v5M14 11v5M9 7l1-3h4l1 3M6 7l1 13h10l1-13"/>',
