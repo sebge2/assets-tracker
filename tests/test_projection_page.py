@@ -107,7 +107,7 @@ def test_main_window_navigates_to_the_projection_page(qtbot: QtBot, conn: Any) -
         "Simulation",
     ]
 
-    qtbot.mouseClick(window._nav_buttons[6], Qt.MouseButton.LeftButton)
+    qtbot.mouseClick(window._nav_buttons[7], Qt.MouseButton.LeftButton)
 
     assert window._stack.currentWidget() is window.projection_page
-    assert window._nav_buttons[6].isChecked()
+    assert window._nav_buttons[7].isChecked()

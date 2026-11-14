@@ -18,12 +18,14 @@ from assets_tracker.db.connection import connect
 from assets_tracker.db.fund_repository import FundRepository
 from assets_tracker.db.fx_repository import FxRepository
 from assets_tracker.db.stock_repository import StockRepository
+from assets_tracker.db.term_note_repository import TermNoteRepository
 from assets_tracker.domain.bonds import BondDetails, CouponFrequency
 from assets_tracker.domain.cash import CashAccount, InterestFrequency, MovementKind
 from assets_tracker.domain.commodities import CommodityDetails, CommodityFamily, CommodityForm
 from assets_tracker.domain.funds import FundDetails, ValuationSource
 from assets_tracker.domain.models import Transaction, TransactionType
 from assets_tracker.domain.stocks import StockDetails
+from assets_tracker.domain.term_notes import InterestPayout, Repayment, TermNoteDetails
 from assets_tracker.ui.allocation_donut import AllocationDonut, DonutSlice
 from assets_tracker.ui.main_window import MainWindow
 from assets_tracker.ui.portfolio_page import PortfolioPage
@@ -50,6 +52,7 @@ def make_page(qtbot: QtBot, conn: Any) -> PortfolioPage:
         BondRepository(conn),
         StockRepository(conn),
         FxRepository(conn),
+        term_notes=TermNoteRepository(conn),
         today=lambda: TODAY,
     )
     qtbot.addWidget(page)
@@ -288,3 +291,36 @@ def test_stocks_not_in_euros_are_left_out_without_a_rate_and_converted_with_one(
 
     assert f"9{NNBSP}190,00{NBSP}€" in texts(page)  # 8 200 + 10 × 110 $ × 0,9
     assert page._note.isHidden()
+
+
+def test_term_notes_count_with_their_accrued_interest(qtbot: QtBot, conn: Any) -> None:
+    note = TermNoteDetails(
+        "Crédit Mutuel", D(10000), D("3.65"), date(2026, 1, 1), date(2028, 1, 1),
+        InterestPayout.MATURITY,
+    )  # fmt: skip
+    TermNoteRepository(conn).create("Bon 2 ans", note)
+    page = make_page(qtbot, conn)
+
+    assert page._portfolio is not None
+    assert [s.asset_type.value for s in page._portfolio.slices] == ["TERM_NOTE"]
+    # 316 jours écoulés au 13/11/2026 : 10 000 × 3,65 % × 316 / 365 = 316 €.
+    assert page._portfolio.summary.total == D(10316)
+    assert page._portfolio.summary.unrealized == D(316)
+
+
+def test_a_repaid_term_note_leaves_the_total_and_realizes_its_interest(
+    qtbot: QtBot, conn: Any
+) -> None:
+    note = TermNoteDetails(
+        "Crédit Mutuel", D(10000), D("3.65"), date(2026, 1, 1), date(2026, 7, 1),
+        InterestPayout.MATURITY,
+    )  # fmt: skip
+    repository = TermNoteRepository(conn)
+    created = repository.create("Bon 6 mois", note)
+    assert created.asset.id is not None
+    repository.repay(created.asset.id, Repayment(date(2026, 7, 1), D(10000), D(181)))
+    page = make_page(qtbot, conn)
+
+    assert page._portfolio is not None
+    assert page._portfolio.summary.total == 0
+    assert page._portfolio.summary.realized == D(181)

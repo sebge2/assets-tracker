@@ -158,3 +158,19 @@ CREATE TABLE IF NOT EXISTS asset_exposures (
     weight   TEXT NOT NULL,
     PRIMARY KEY (asset_id, kind, name)
 );
+
+-- Bons de caisse : un actif (`assets`, symbole généré) et ses paramètres. Pas de cours ni de
+-- transactions : la valeur est le capital plus les intérêts courus (`domain/term_notes.py`).
+-- `repaid_*` est renseigné quand le bon est remboursé (capital et intérêts réellement reçus).
+CREATE TABLE IF NOT EXISTS term_note_details (
+    asset_id         INTEGER PRIMARY KEY REFERENCES assets(id) ON DELETE CASCADE,
+    issuer           TEXT NOT NULL,
+    capital          TEXT NOT NULL,           -- Decimal sérialisé, en euros
+    rate             TEXT NOT NULL,           -- taux annuel en %
+    start_date       TEXT NOT NULL,           -- ISO 8601
+    end_date         TEXT NOT NULL,
+    payout           TEXT NOT NULL CHECK (payout IN ('MATURITY', 'ANNUAL')),
+    repaid_on        TEXT,
+    repaid_capital   TEXT,
+    repaid_interest  TEXT
+);

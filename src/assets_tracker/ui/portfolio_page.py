@@ -26,6 +26,7 @@ from assets_tracker.db.exposure_repository import ExposureRepository
 from assets_tracker.db.fund_repository import FundRepository
 from assets_tracker.db.fx_repository import FxRepository
 from assets_tracker.db.stock_repository import StockRepository
+from assets_tracker.db.term_note_repository import TermNoteRepository
 from assets_tracker.domain.exposure import ExposedAsset, ExposureKind
 from assets_tracker.domain.fx import rate_for, transactions_in_euros
 from assets_tracker.domain.models import InstrumentType
@@ -39,6 +40,7 @@ from assets_tracker.domain.portfolio import (
     change,
     window,
 )
+from assets_tracker.domain.term_notes import note_value, portfolio_prices, portfolio_transactions
 from assets_tracker.ui import theme
 from assets_tracker.ui.allocation_donut import AllocationDonut, DonutSlice
 from assets_tracker.ui.evolution_chart import EvolutionChart
@@ -113,6 +115,7 @@ class PortfolioPage(QWidget):
         fx: FxRepository,
         *,
         exposure: ExposureRepository | None = None,
+        term_notes: TermNoteRepository | None = None,
         today: Callable[[], date] = date.today,
         parent: QWidget | None = None,
     ) -> None:
@@ -124,6 +127,7 @@ class PortfolioPage(QWidget):
         self._stocks = stocks
         self._fx = fx
         self._exposure = exposure
+        self._term_notes = term_notes
         self._foreign_funds: tuple[str, ...] = ()
         self._foreign_bonds: tuple[str, ...] = ()
         self._foreign_stocks: tuple[str, ...] = ()
@@ -307,6 +311,21 @@ class PortfolioPage(QWidget):
                     InstrumentType.STOCK, transactions_in_euros(stock.transactions, rate), history
                 )
             )
+        today = self._today()
+        if self._term_notes is not None:
+            for note in self._term_notes.list_holdings():
+                asset_id = note.asset.id
+                if asset_id is None:
+                    continue
+                # Un bon est une position d'un titre : capital à la souscription, valeur (capital
+                # + intérêts courus) en fin de mois, remboursement = vente.
+                priced.append(
+                    PricedSource(
+                        InstrumentType.TERM_NOTE,
+                        portfolio_transactions(asset_id, note.details, note.repayment),
+                        portfolio_prices(note.details, today, note.repayment),
+                    )
+                )
         return PortfolioInput(cash, priced)
 
     def refresh(self) -> None:
@@ -317,7 +336,7 @@ class PortfolioPage(QWidget):
             f"Cours mis à jour à {max(quoted):%H:%M}" if quoted else "Aucun cours actualisé"
         )
         self._value_card.set(
-            money(summary.total, "EUR"), "Cash, fonds, obligations, actions et matières premières"
+            money(summary.total, "EUR"), "Cash, fonds, obligations, bons de caisse, actions et matières premières"
         )
         gain_color = theme.variation_color(summary.unrealized)
         arrow = "▲ " if summary.unrealized > 0 else "▼ " if summary.unrealized < 0 else ""
@@ -372,6 +391,22 @@ class PortfolioPage(QWidget):
                         holding.asset.name,
                         instrument,
                         quantity * holding.valuation.value * rate,
+                        tuple(self._exposure.get(asset_id, ExposureKind.SECTOR)),
+                        tuple(self._exposure.get(asset_id, ExposureKind.ZONE)),
+                        asset_id,
+                    )
+                )
+        if self._term_notes is not None:
+            for note in self._term_notes.list_holdings():
+                asset_id = note.asset.id
+                if asset_id is None or note.repayment is not None:
+                    continue
+                value = note_value(note.details, self._today()).value
+                assets.append(
+                    ExposedAsset(
+                        note.asset.name,
+                        InstrumentType.TERM_NOTE,
+                        value,
                         tuple(self._exposure.get(asset_id, ExposureKind.SECTOR)),
                         tuple(self._exposure.get(asset_id, ExposureKind.ZONE)),
                         asset_id,

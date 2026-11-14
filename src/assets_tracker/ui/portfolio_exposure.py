@@ -45,12 +45,14 @@ SCOPES: tuple[tuple[str, InstrumentType | None], ...] = (
     ("Actions", InstrumentType.STOCK),
     ("Obligations", InstrumentType.BOND),
     ("Fonds", InstrumentType.FUND),
+    ("Bons de caisse", InstrumentType.TERM_NOTE),
 )
 VIEWS = (("Secteurs", ExposureKind.SECTOR), ("Zones géographiques", ExposureKind.ZONE))
 _TYPE_ORDER = (
     InstrumentType.STOCK,
     InstrumentType.FUND,
     InstrumentType.BOND,
+    InstrumentType.TERM_NOTE,
     InstrumentType.CASH,
     InstrumentType.COMMODITY,
 )

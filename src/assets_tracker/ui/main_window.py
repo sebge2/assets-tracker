@@ -22,6 +22,7 @@ from assets_tracker.db.exposure_repository import ExposureRepository
 from assets_tracker.db.fund_repository import FundRepository
 from assets_tracker.db.fx_repository import FxRepository
 from assets_tracker.db.stock_repository import StockRepository
+from assets_tracker.db.term_note_repository import TermNoteRepository
 from assets_tracker.domain.models import InstrumentType
 from assets_tracker.ui import icons, theme
 from assets_tracker.ui.bonds_page import BondsPage
@@ -31,6 +32,7 @@ from assets_tracker.ui.funds_page import FundsPage
 from assets_tracker.ui.portfolio_page import PortfolioPage
 from assets_tracker.ui.projection_page import ProjectionPage
 from assets_tracker.ui.stocks_page import StocksPage
+from assets_tracker.ui.term_notes_page import TermNotesPage
 
 
 class MainWindow(QMainWindow):
@@ -45,6 +47,7 @@ class MainWindow(QMainWindow):
         fund_repository = FundRepository(database)
         bond_repository = BondRepository(database)
         stock_repository = StockRepository(database)
+        term_note_repository = TermNoteRepository(database)
         fx_repository = FxRepository(database)
         exposure_repository = ExposureRepository(database)
         self.portfolio_page = PortfolioPage(
@@ -55,12 +58,14 @@ class MainWindow(QMainWindow):
             stock_repository,
             fx_repository,
             exposure=exposure_repository,
+            term_notes=term_note_repository,
         )
         self.cash_page = CashPage(cash_repository)
         self._stack.addWidget(self.portfolio_page)
         self.commodities_page = CommoditiesPage(commodity_repository)
         self.funds_page = FundsPage(fund_repository, exposure=exposure_repository)
         self.bonds_page = BondsPage(bond_repository, fx_repository, exposure=exposure_repository)
+        self.term_notes_page = TermNotesPage(term_note_repository, exposure=exposure_repository)
         self.stocks_page = StocksPage(stock_repository, fx_repository, exposure=exposure_repository)
         self.projection_page = ProjectionPage()
         self.portfolio_page.asset_requested.connect(self._open_asset)
@@ -68,6 +73,7 @@ class MainWindow(QMainWindow):
         self._stack.addWidget(self.commodities_page)
         self._stack.addWidget(self.funds_page)
         self._stack.addWidget(self.bonds_page)
+        self._stack.addWidget(self.term_notes_page)
         self._stack.addWidget(self.stocks_page)
         self._stack.addWidget(self.projection_page)
 
@@ -111,6 +117,7 @@ class MainWindow(QMainWindow):
                 ("Matières premières", "commodities"),
                 ("Fonds", "fund"),
                 ("Obligations", "bond"),
+                ("Bons de caisse", "term_note"),
                 ("Actions", "stock"),
                 ("Simulation", "simulation"),
             )
@@ -133,7 +140,8 @@ class MainWindow(QMainWindow):
         pages = {
             InstrumentType.FUND: (3, self.funds_page),
             InstrumentType.BOND: (4, self.bonds_page),
-            InstrumentType.STOCK: (5, self.stocks_page),
+            InstrumentType.TERM_NOTE: (5, self.term_notes_page),
+            InstrumentType.STOCK: (6, self.stocks_page),
         }
         target = pages.get(instrument)
         if target is None:
@@ -157,5 +165,7 @@ class MainWindow(QMainWindow):
             self.bonds_page.refresh()
             self.bonds_page.refresh_quotes()
         elif index == 5:
+            self.term_notes_page.refresh()
+        elif index == 6:
             self.stocks_page.refresh()
             self.stocks_page.refresh_quotes()
