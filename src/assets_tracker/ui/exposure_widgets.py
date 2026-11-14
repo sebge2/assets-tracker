@@ -24,6 +24,7 @@ from assets_tracker.domain.exposure import ExposureEntry, ExposureKind, main_exp
 from assets_tracker.ui import theme
 from assets_tracker.ui.exposure_dialog import ExposureDialog, weight_text
 from assets_tracker.ui.formatting import NBSP, format_number
+from assets_tracker.ui.spinner import Spinner
 
 Parts = list[tuple[str, Decimal, Decimal]]
 
@@ -129,8 +130,9 @@ class ExposureSection(QWidget):
         caption = QLabel("SECTEURS ET ZONES")
         caption.setProperty("role", "caption")
         self._import = QPushButton("Importer")
-        self._import.setAccessibleName("Importer les secteurs et zones depuis Yahoo")
-        self._import.setToolTip("Récupère les secteurs et zones depuis Yahoo Finance")
+        self._import.setAccessibleName("Importer les secteurs et zones")
+        self._import.setToolTip("Récupère les secteurs et zones depuis la source de données")
+        self._spinner = Spinner(16)
         self._import.clicked.connect(lambda _=False: self.import_requested.emit())
         self._import.setVisible(False)
         self._edit = QPushButton("Modifier")
@@ -138,6 +140,7 @@ class ExposureSection(QWidget):
         self._edit.clicked.connect(lambda _=False: self.edit_requested.emit())
         head = QHBoxLayout()
         head.addWidget(caption, 1)
+        head.addWidget(self._spinner)
         head.addWidget(self._import)
         head.addWidget(self._edit)
         self._bars: dict[ExposureKind, tuple[BreakdownBar, QLabel]] = {}
@@ -156,8 +159,13 @@ class ExposureSection(QWidget):
             self._bars[kind] = (bar, legend)
 
     def set_import_available(self, available: bool) -> None:
-        """Affiche le bouton « Importer » (données Yahoo) quand la page sait le faire."""
+        """Affiche le bouton « Importer » quand la page sait le faire."""
         self._import.setVisible(available)
+
+    def set_busy(self, busy: bool) -> None:
+        """Spinner pendant l'appel réseau ; le bouton est désactivé le temps de la requête."""
+        self._spinner.set_running(busy)
+        self._import.setEnabled(not busy)
 
     def set_data(self, sectors: Sequence[ExposureEntry], zones: Sequence[ExposureEntry]) -> None:
         for kind, entries in ((ExposureKind.SECTOR, sectors), (ExposureKind.ZONE, zones)):

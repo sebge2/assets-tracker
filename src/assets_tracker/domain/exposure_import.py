@@ -76,13 +76,18 @@ COUNTRIES = {
 }
 
 
+class ExposureError(Exception):
+    """Échec d'une source de données (clé refusée, quota, réseau…) : le message est affiché."""
+
+
 @dataclass(frozen=True, slots=True)
 class RawExposure:
-    """Ce que Yahoo fournit : un secteur et un pays (action) ou des poids sectoriels (fonds)."""
+    """Ce qu'une source fournit : secteur et pays (action) ou poids sectoriels/pays (fonds)."""
 
     sector: str | None = None
     country: str | None = None
     sector_weights: Mapping[str, float] | None = None
+    country_weights: Mapping[str, float] | None = None  # fonds : poids par pays (anglais)
 
 
 @dataclass(frozen=True, slots=True)
@@ -151,12 +156,19 @@ def translate(raw: RawExposure) -> ImportedExposure:
     elif raw.sector and (name := sector_name(raw.sector)):
         sectors[name] = Decimal(1)
     zones: dict[str, Decimal] = {}
-    if raw.country and (zone := zone_name(raw.country)):
+    if raw.country_weights:
+        for label, weight in raw.country_weights.items():
+            share = Decimal(str(weight))
+            if share > 0:
+                key = zone_name(label) or OTHER
+                zones[key] = zones.get(key, Decimal(0)) + share
+    elif raw.country and (zone := zone_name(raw.country)):
         zones[zone] = Decimal(1)
     return ImportedExposure(normalize(sectors), normalize(zones))
 
 
 __all__ = [
+    "ExposureError",
     "ImportedExposure",
     "RawExposure",
     "normalize",

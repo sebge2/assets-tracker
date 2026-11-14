@@ -6,9 +6,10 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import date, datetime
 from decimal import Decimal
+from functools import partial
 from html import escape
 
-from PySide6.QtCore import Qt, QThreadPool
+from PySide6.QtCore import QDate, Qt, QThreadPool
 from PySide6.QtGui import QResizeEvent
 from PySide6.QtWidgets import (
     QAbstractItemView,
@@ -33,8 +34,10 @@ from PySide6.QtWidgets import (
 
 from assets_tracker.db.exposure_repository import ExposureRepository
 from assets_tracker.db.fx_repository import FxRepository
+from assets_tracker.db.settings_repository import FMP_API_KEY, SettingsRepository
 from assets_tracker.db.stock_repository import StockHolding, StockRepository
 from assets_tracker.domain.exposure import ExposureEntry, ExposureKind, exposure_breakdown
+from assets_tracker.domain.exposure_import import RawExposure
 from assets_tracker.domain.funds import FundValue, ValuationSource
 from assets_tracker.domain.fx import currencies_to_refresh, rate_for
 from assets_tracker.domain.models import Position, Transaction, TransactionType
@@ -76,6 +79,7 @@ from assets_tracker.ui.bonds_page import (
 )
 from assets_tracker.ui.commodity_chart import PositionChart
 from assets_tracker.market.exposure import ExposureFetcher
+from assets_tracker.market.fmp import fetch_stock_exposure, fetch_with_fallback
 from assets_tracker.ui.exposure_import import ExposureImporter
 from assets_tracker.ui.exposure_widgets import (
     ExposureSection,
@@ -84,6 +88,7 @@ from assets_tracker.ui.exposure_widgets import (
     main_label,
 )
 from assets_tracker.ui.form_helpers import date_edit, labeled, row, to_date
+from assets_tracker.ui.quote_import import PriceFetcher, YahooFetchButton, price_text
 from assets_tracker.ui.formatting import (
     MINUS,
     NBSP,
@@ -106,6 +111,15 @@ CURRENCY = "EUR"
 
 
 # --- Données affichées ------------------------------------------------------
+
+
+def _in_instrument_currency(currencies: dict[str, str]) -> QuoteFetcher:
+    """Cours Yahoo converti dans la devise de chaque titre (Yahoo peut coter en USD)."""
+
+    def fetch(symbol: str) -> Decimal | None:
+        return fetch_stock_price(symbol, currencies.get(symbol))
+
+    return fetch
 
 
 @dataclass(frozen=True, slots=True)
@@ -248,9 +262,18 @@ class StockDialog(_ValidatedDialog):
 class QuoteDialog(_ValidatedDialog):
     """Saisie manuelle du cours, sans passer par une opération."""
 
-    def __init__(self, parent: QWidget | None, holding: StockHolding, today: date) -> None:
+    def __init__(
+        self,
+        parent: QWidget | None,
+        holding: StockHolding,
+        today: date,
+        *,
+        fetch: PriceFetcher | None = None,
+        background: bool = True,
+    ) -> None:
         super().__init__(parent)
         self._today = today
+        self._fetched_text: str | None = None
         self.setWindowTitle("Mettre à jour le cours")
         self.setMinimumWidth(460)
         self._price = QLineEdit()
@@ -272,8 +295,23 @@ class QuoteDialog(_ValidatedDialog):
         layout.addWidget(
             row(labeled(f"Cours ({currency})", self._price, hint), labeled("Date", self._date))
         )
+        if fetch is not None:
+            button = YahooFetchButton(fetch, background=background)
+            button.fetched.connect(self._on_fetched)
+            layout.addWidget(button)
         layout.addWidget(self._error)
         layout.addWidget(_buttons(self, "Enregistrer"))
+
+    def _on_fetched(self, price: object) -> None:
+        assert isinstance(price, Decimal)
+        self._fetched_text = price_text(price)
+        self._price.setText(self._fetched_text)
+        self._date.setDate(QDate(self._today.year, self._today.month, self._today.day))
+
+    @property
+    def from_yahoo(self) -> bool:
+        """Le cours enregistré est celui récupéré chez Yahoo (non modifié depuis)."""
+        return self._fetched_text is not None and self._price.text() == self._fetched_text
 
     def validate(self) -> None:
         self.form()
@@ -535,9 +573,11 @@ class StocksPage(QWidget):
         *,
         exposure: ExposureRepository | None = None,
         exposure_fetcher: ExposureFetcher | None = None,
+        settings: SettingsRepository | None = None,
+        stock_fallback: Callable[[str, str], RawExposure | None] = fetch_stock_exposure,
         today: Callable[[], date] = date.today,
         now: Callable[[], datetime] = datetime.now,
-        quote_fetcher: QuoteFetcher = fetch_stock_price,
+        quote_fetcher: QuoteFetcher | None = None,
         rate_fetcher: RateFetcher = fetch_rate_to_eur,
         background: bool = True,
         parent: QWidget | None = None,
@@ -546,6 +586,9 @@ class StocksPage(QWidget):
         self._repository = repository
         self._fx = fx
         self._exposure = exposure
+        self._settings = settings
+        self._yahoo_fetcher = exposure_fetcher
+        self._stock_fallback = stock_fallback
         self._importer: ExposureImporter | None = None
         if exposure is not None and exposure_fetcher is not None:
             self._importer = ExposureImporter(
@@ -553,9 +596,11 @@ class StocksPage(QWidget):
             )
             self._importer.changed.connect(self.refresh)
             self._importer.manual_finished.connect(self._on_import_finished)
+            self._importer.busy_changed.connect(lambda busy: self._exposure_section.set_busy(busy))
+            self._importer.failed.connect(self._on_import_failed)
         self._today = today
         self._now = now
-        self._quote_fetcher = quote_fetcher
+        self._quote_fetcher = quote_fetcher  # None : Yahoo, converti dans la devise du titre
         self._rate_fetcher = rate_fetcher
         self._background = background
         self._selected: int | None = None
@@ -1107,6 +1152,9 @@ class StocksPage(QWidget):
             for h in open_stocks
             if h.asset.id is not None and h.asset.id in due
         ]
+        quote_fetcher = self._quote_fetcher or _in_instrument_currency(
+            {h.asset.symbol: h.asset.currency for h in open_stocks}
+        )
         if not requests and not currencies:
             return
         self._refreshing = True
@@ -1115,12 +1163,12 @@ class StocksPage(QWidget):
         if not self._background:
             self._finish_refresh(
                 (
-                    fetch_quotes(requests, self._quote_fetcher),
+                    fetch_quotes(requests, quote_fetcher),
                     fetch_rates(currencies, self._rate_fetcher),
                 )
             )
             return
-        task = _QuoteTask(requests, self._quote_fetcher, currencies, self._rate_fetcher)
+        task = _QuoteTask(requests, quote_fetcher, currencies, self._rate_fetcher)
         task.signals.done.connect(self._finish_refresh)
         self._tasks.append(task)
         QThreadPool.globalInstance().start(task)
@@ -1169,25 +1217,41 @@ class StocksPage(QWidget):
         symbol = view.holding.asset.symbol
         if not symbol:
             QMessageBox.information(
-                self, "Import impossible", "Cet actif n'a pas de symbole Yahoo."
+                self, "Import impossible", "Cet actif n'a pas de symbole de cotation."
             )
             return
+        # Yahoo d'abord ; FMP seulement s'il n'a rien et qu'une clé est configurée (lue ici,
+        # dans le thread principal : le thread de fond n'accède jamais à la base).
+        fetcher: ExposureFetcher | None = None
+        api_key = self._settings.get(FMP_API_KEY) if self._settings is not None else None
+        if api_key and self._yahoo_fetcher is not None:
+            fetcher = partial(
+                fetch_with_fallback,
+                primary=self._yahoo_fetcher,
+                api_key=api_key,
+                fallback=self._stock_fallback,
+            )
+        source = "Yahoo ou FMP" if api_key else "Yahoo"
         if any(self._exposure.get(view.asset_id, kind) for kind in ExposureKind):
             answer = QMessageBox.question(
                 self,
-                "Importer depuis Yahoo",
-                "Les répartitions fournies par Yahoo remplaceront celles déjà saisies. Continuer ?",
+                f"Importer depuis {source}",
+                f"Les répartitions fournies par {source} remplaceront celles déjà saisies. "
+                "Continuer ?",
             )
             if answer != QMessageBox.StandardButton.Yes:
                 return
-        self._importer.import_now(view.asset_id, symbol)
+        self._importer.import_now(view.asset_id, symbol, fetcher)
+
+    def _on_import_failed(self, message: str) -> None:
+        QMessageBox.critical(self, "Import impossible", message)
 
     def _on_import_finished(self, asset_id: int, found: bool) -> None:
         if not found:
             QMessageBox.information(
                 self,
                 "Import impossible",
-                "Yahoo ne fournit pas de répartition pour cet actif. "
+                "Aucune source ne fournit de répartition pour cet actif. "
                 "Saisissez-la avec « Modifier ».",
             )
 
@@ -1251,13 +1315,19 @@ class StocksPage(QWidget):
     def _update_quote(self, view: StockView | None) -> None:
         if view is None:
             return
-        dialog = QuoteDialog(self, view.holding, self._today())
+        asset = view.holding.asset
+        fetch: PriceFetcher | None = None
+        if view.holding.details.valuation_source is ValuationSource.YAHOO and asset.symbol:
+            fetcher = self._quote_fetcher or _in_instrument_currency({asset.symbol: asset.currency})
+            fetch = partial(fetcher, asset.symbol)
+        dialog = QuoteDialog(
+            self, view.holding, self._today(), fetch=fetch, background=self._background
+        )
         while dialog.exec() == QDialog.DialogCode.Accepted:
             try:
                 when, price = dialog.form()
-                self._repository.record_quote(
-                    view.asset_id, when, price, self._now(), ValuationSource.MANUAL
-                )
+                source = ValuationSource.YAHOO if dialog.from_yahoo else ValuationSource.MANUAL
+                self._repository.record_quote(view.asset_id, when, price, self._now(), source)
             except ValueError as error:
                 dialog.show_error(str(error))
                 continue

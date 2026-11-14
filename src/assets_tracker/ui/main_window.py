@@ -21,6 +21,7 @@ from assets_tracker.db.commodity_repository import CommodityRepository
 from assets_tracker.db.exposure_repository import ExposureRepository
 from assets_tracker.db.fund_repository import FundRepository
 from assets_tracker.db.fx_repository import FxRepository
+from assets_tracker.db.settings_repository import SettingsRepository
 from assets_tracker.db.stock_repository import StockRepository
 from assets_tracker.db.term_note_repository import TermNoteRepository
 from assets_tracker.domain.models import InstrumentType
@@ -32,6 +33,7 @@ from assets_tracker.ui.commodities_page import CommoditiesPage
 from assets_tracker.ui.funds_page import FundsPage
 from assets_tracker.ui.portfolio_page import PortfolioPage
 from assets_tracker.ui.projection_page import ProjectionPage
+from assets_tracker.ui.settings_page import SettingsPage
 from assets_tracker.ui.stocks_page import StocksPage
 from assets_tracker.ui.term_notes_page import TermNotesPage
 
@@ -46,6 +48,7 @@ class MainWindow(QMainWindow):
         cash_repository = CashRepository(database)
         commodity_repository = CommodityRepository(database)
         fund_repository = FundRepository(database)
+        settings_repository = SettingsRepository(database)
         bond_repository = BondRepository(database)
         stock_repository = StockRepository(database)
         term_note_repository = TermNoteRepository(database)
@@ -65,7 +68,7 @@ class MainWindow(QMainWindow):
         self._stack.addWidget(self.portfolio_page)
         self.commodities_page = CommoditiesPage(commodity_repository)
         self.funds_page = FundsPage(
-            fund_repository, exposure=exposure_repository, exposure_fetcher=fetch_exposure
+            fund_repository, exposure=exposure_repository, settings=settings_repository
         )
         self.bonds_page = BondsPage(bond_repository, fx_repository, exposure=exposure_repository)
         self.term_notes_page = TermNotesPage(term_note_repository, exposure=exposure_repository)
@@ -74,8 +77,10 @@ class MainWindow(QMainWindow):
             fx_repository,
             exposure=exposure_repository,
             exposure_fetcher=fetch_exposure,
+            settings=settings_repository,
         )
         self.projection_page = ProjectionPage()
+        self.settings_page = SettingsPage(settings_repository)
         self.portfolio_page.asset_requested.connect(self._open_asset)
         self._stack.addWidget(self.cash_page)
         self._stack.addWidget(self.commodities_page)
@@ -84,6 +89,7 @@ class MainWindow(QMainWindow):
         self._stack.addWidget(self.term_notes_page)
         self._stack.addWidget(self.stocks_page)
         self._stack.addWidget(self.projection_page)
+        self._stack.addWidget(self.settings_page)
 
         root = QWidget()
         root.setObjectName("root")
@@ -128,6 +134,7 @@ class MainWindow(QMainWindow):
                 ("Bons de caisse", "term_note"),
                 ("Actions", "stock"),
                 ("Simulation", "simulation"),
+                ("Paramètres", "settings"),
             )
         ):
             button = QPushButton(label)
@@ -177,3 +184,5 @@ class MainWindow(QMainWindow):
         elif index == 6:
             self.stocks_page.refresh()
             self.stocks_page.refresh_quotes()
+        elif index == 8:
+            self.settings_page.refresh()

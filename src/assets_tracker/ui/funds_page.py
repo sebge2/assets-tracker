@@ -6,9 +6,10 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import date, datetime
 from decimal import Decimal
+from functools import partial
 from html import escape
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import QDate, Qt
 from PySide6.QtGui import QResizeEvent
 from PySide6.QtWidgets import (
     QAbstractItemView,
@@ -35,7 +36,9 @@ from PySide6.QtWidgets import (
 
 from assets_tracker.db.exposure_repository import ExposureRepository
 from assets_tracker.db.fund_repository import FundHolding, FundRepository
+from assets_tracker.db.settings_repository import FMP_API_KEY, SettingsRepository
 from assets_tracker.domain.exposure import ExposureEntry, ExposureKind, exposure_breakdown
+from assets_tracker.domain.exposure_import import RawExposure
 from assets_tracker.domain.funds import (
     FundDetails,
     FundValue,
@@ -51,9 +54,11 @@ from assets_tracker.domain.funds import (
 from assets_tracker.domain.models import Position, Transaction, TransactionType
 from assets_tracker.domain.positions import compute_position
 from assets_tracker.domain.valuation import Valuation
+from assets_tracker.market.exposure import ExposureFetcher
+from assets_tracker.market.fmp import fetch_fund_exposure
+from assets_tracker.market.stocks import fetch_stock_price
 from assets_tracker.ui import theme
 from assets_tracker.ui.commodity_chart import PositionChart
-from assets_tracker.market.exposure import ExposureFetcher
 from assets_tracker.ui.exposure_import import ExposureImporter
 from assets_tracker.ui.exposure_widgets import (
     ExposureSection,
@@ -62,6 +67,7 @@ from assets_tracker.ui.exposure_widgets import (
     main_label,
 )
 from assets_tracker.ui.form_helpers import date_edit, labeled, row, to_date
+from assets_tracker.ui.quote_import import PriceFetcher, YahooFetchButton, price_text
 from assets_tracker.ui.formatting import (
     MINUS,
     NBSP,
@@ -140,6 +146,10 @@ def alert_message(pending: list[FundView], today: date) -> str:
     if others:
         text += f" {others} autre{'s' if others > 1 else ''} fonds à mettre à jour."
     return text
+
+
+def _no_source(symbol: str) -> RawExposure | None:
+    return None
 
 
 def _yahoo_symbol(holding: FundHolding) -> str | None:
@@ -243,7 +253,15 @@ class FundDialog(QDialog):
 class NavDialog(QDialog):
     """Saisie manuelle de la valeur liquidative d'un fonds, sans passer par une opération."""
 
-    def __init__(self, parent: QWidget | None, holding: FundHolding, today: date) -> None:
+    def __init__(
+        self,
+        parent: QWidget | None,
+        holding: FundHolding,
+        today: date,
+        *,
+        fetch: PriceFetcher | None = None,
+        background: bool = True,
+    ) -> None:
         super().__init__(parent)
         self._today = today
         self.setWindowTitle("Mettre à jour la VL")
@@ -267,7 +285,16 @@ class NavDialog(QDialog):
         layout.addWidget(
             row(labeled("Valeur liquidative", self._nav, hint), labeled("Date", self._date))
         )
+        if fetch is not None:
+            button = YahooFetchButton(fetch, background=background)
+            button.fetched.connect(self._on_fetched)
+            layout.addWidget(button)
         layout.addWidget(_buttons(self, "Enregistrer"))
+
+    def _on_fetched(self, price: object) -> None:
+        assert isinstance(price, Decimal)
+        self._nav.setText(price_text(price))
+        self._date.setDate(QDate(self._today.year, self._today.month, self._today.day))
 
     def form(self) -> tuple[date, Decimal]:
         nav = parse_decimal(self._nav.text(), "Valeur liquidative")
@@ -557,6 +584,9 @@ class FundsPage(QWidget):
         *,
         exposure: ExposureRepository | None = None,
         exposure_fetcher: ExposureFetcher | None = None,
+        settings: SettingsRepository | None = None,
+        fund_fetcher: Callable[[str, str], RawExposure | None] = fetch_fund_exposure,
+        nav_fetcher: Callable[[str, str], Decimal | None] = fetch_stock_price,
         today: Callable[[], date] = date.today,
         now: Callable[[], datetime] = datetime.now,
         background: bool = True,
@@ -565,13 +595,19 @@ class FundsPage(QWidget):
         super().__init__(parent)
         self._repository = repository
         self._exposure = exposure
+        self._settings = settings
+        self._fund_fetcher = fund_fetcher
+        self._nav_fetcher = nav_fetcher
+        self._background = background
         self._importer: ExposureImporter | None = None
-        if exposure is not None and exposure_fetcher is not None:
+        if exposure is not None and (exposure_fetcher is not None or settings is not None):
             self._importer = ExposureImporter(
-                exposure, exposure_fetcher, background=background, parent=self
+                exposure, exposure_fetcher or _no_source, background=background, parent=self
             )
             self._importer.changed.connect(self.refresh)
             self._importer.manual_finished.connect(self._on_import_finished)
+            self._importer.busy_changed.connect(lambda busy: self._exposure_section.set_busy(busy))
+            self._importer.failed.connect(self._on_import_failed)
         self._today = today
         self._now = now
         self._selected: int | None = None
@@ -915,7 +951,8 @@ class FundsPage(QWidget):
         background, foreground = (
             (theme.WARNING_SOFT, theme.WARNING) if warn else (theme.OVERLAY, theme.TEXT_MUTED)
         )
-        linked = _yahoo_symbol(holding) if details.valuation_source is ValuationSource.YAHOO else None
+        is_yahoo = details.valuation_source is ValuationSource.YAHOO
+        linked = _yahoo_symbol(holding) if is_yahoo else None
         self._d_source.setText(source_badge_html(badge, linked, foreground))
         self._d_source.setToolTip("Ouvrir la page Yahoo Finance" if linked else "")
         self._d_source.setCursor(
@@ -1036,25 +1073,42 @@ class FundsPage(QWidget):
         symbol = _yahoo_symbol(view.holding)
         if not symbol:
             QMessageBox.information(
-                self, "Import impossible", "Cet actif n'a pas de symbole Yahoo."
+                self, "Import impossible", "Cet actif n'a pas de symbole de cotation."
             )
             return
+        fetcher: ExposureFetcher | None = None
+        source = "Yahoo"
+        if self._settings is not None:
+            api_key = self._settings.get(FMP_API_KEY)
+            if not api_key:
+                QMessageBox.information(
+                    self,
+                    "Clé FMP manquante",
+                    "Renseignez votre clé d'API Financial Modeling Prep dans « Paramètres ».",
+                )
+                return
+            source = "FMP"
+            fetcher = partial(self._fund_fetcher, api_key=api_key)
         if any(self._exposure.get(view.asset_id, kind) for kind in ExposureKind):
             answer = QMessageBox.question(
                 self,
-                "Importer depuis Yahoo",
-                "Les répartitions fournies par Yahoo remplaceront celles déjà saisies. Continuer ?",
+                f"Importer depuis {source}",
+                f"Les répartitions fournies par {source} remplaceront celles déjà saisies. "
+                "Continuer ?",
             )
             if answer != QMessageBox.StandardButton.Yes:
                 return
-        self._importer.import_now(view.asset_id, symbol)
+        self._importer.import_now(view.asset_id, symbol, fetcher)
+
+    def _on_import_failed(self, message: str) -> None:
+        QMessageBox.critical(self, "Import impossible", message)
 
     def _on_import_finished(self, asset_id: int, found: bool) -> None:
         if not found:
             QMessageBox.information(
                 self,
                 "Import impossible",
-                "Yahoo ne fournit pas de répartition pour cet actif. "
+                "La source ne fournit pas de répartition pour cet actif. "
                 "Saisissez-la avec « Modifier ».",
             )
 
@@ -1098,7 +1152,13 @@ class FundsPage(QWidget):
     def _update_nav(self, view: FundView | None) -> None:
         if view is None:
             return
-        dialog = NavDialog(self, view.holding, self._today())
+        symbol = _yahoo_symbol(view.holding)
+        fetch: PriceFetcher | None = None
+        if symbol:
+            fetch = partial(self._nav_fetcher, symbol, view.holding.asset.currency)
+        dialog = NavDialog(
+            self, view.holding, self._today(), fetch=fetch, background=self._background
+        )
         if dialog.exec() != QDialog.DialogCode.Accepted:
             return
         try:

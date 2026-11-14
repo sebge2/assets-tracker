@@ -6,6 +6,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from decimal import Decimal
+from functools import partial
 from html import escape
 
 from PySide6.QtCore import QDate, QObject, QRectF, QRunnable, Qt, QThreadPool, Signal
@@ -72,6 +73,7 @@ from assets_tracker.ui.exposure_widgets import (
     main_label,
 )
 from assets_tracker.ui.form_helpers import date_edit, labeled, row, to_date
+from assets_tracker.ui.quote_import import PriceFetcher, YahooFetchButton, price_text
 from assets_tracker.ui.formatting import (
     MINUS,
     NBSP,
@@ -450,9 +452,18 @@ class BondDialog(_ValidatedDialog):
 class QuoteDialog(_ValidatedDialog):
     """Saisie manuelle du cours (en % du nominal), sans passer par une opération."""
 
-    def __init__(self, parent: QWidget | None, holding: BondHolding, today: date) -> None:
+    def __init__(
+        self,
+        parent: QWidget | None,
+        holding: BondHolding,
+        today: date,
+        *,
+        fetch: PriceFetcher | None = None,
+        background: bool = True,
+    ) -> None:
         super().__init__(parent)
         self._today = today
+        self._fetched_text: str | None = None
         self.setWindowTitle("Mettre à jour le cours")
         self.setMinimumWidth(460)
         self._price = QLineEdit()
@@ -473,8 +484,23 @@ class QuoteDialog(_ValidatedDialog):
         layout.addWidget(
             row(labeled("Cours (% du nominal)", self._price, hint), labeled("Date", self._date))
         )
+        if fetch is not None:
+            button = YahooFetchButton(fetch, background=background)
+            button.fetched.connect(self._on_fetched)
+            layout.addWidget(button)
         layout.addWidget(self._error)
         layout.addWidget(_buttons(self, "Enregistrer"))
+
+    def _on_fetched(self, price: object) -> None:
+        assert isinstance(price, Decimal)
+        self._fetched_text = price_text(price)
+        self._price.setText(self._fetched_text)
+        self._date.setDate(QDate(self._today.year, self._today.month, self._today.day))
+
+    @property
+    def from_yahoo(self) -> bool:
+        """Le cours enregistré est celui récupéré chez Yahoo (non modifié depuis)."""
+        return self._fetched_text is not None and self._price.text() == self._fetched_text
 
     def validate(self) -> None:
         self.form()
@@ -1482,13 +1508,18 @@ class BondsPage(QWidget):
     def _update_quote(self, view: BondView | None) -> None:
         if view is None:
             return
-        dialog = QuoteDialog(self, view.holding, self._today())
+        asset = view.holding.asset
+        fetch: PriceFetcher | None = None
+        if view.holding.details.valuation_source is ValuationSource.YAHOO and asset.symbol:
+            fetch = partial(self._quote_fetcher, asset.symbol)
+        dialog = QuoteDialog(
+            self, view.holding, self._today(), fetch=fetch, background=self._background
+        )
         while dialog.exec() == QDialog.DialogCode.Accepted:
             try:
                 when, price = dialog.form()
-                self._repository.record_quote(
-                    view.asset_id, when, price, self._now(), ValuationSource.MANUAL
-                )
+                source = ValuationSource.YAHOO if dialog.from_yahoo else ValuationSource.MANUAL
+                self._repository.record_quote(view.asset_id, when, price, self._now(), source)
             except ValueError as error:
                 dialog.show_error(str(error))
                 continue

@@ -1,6 +1,6 @@
 # AGENTS.md
 
-Assets Tracker — application desktop locale de suivi de portefeuille. Les données restent sur la machine ; Internet n'est utilisé que pour récupérer des cours.
+Assets Tracker — application desktop locale de suivi de portefeuille. Les données restent sur la machine ; Internet n'est utilisé que pour récupérer des cours et des répartitions (Yahoo, Financial Modeling Prep).
 
 ## Stack
 
@@ -123,6 +123,18 @@ mypy src                         # typage strict
 - **Écran Bons de caisse** (`ui/term_notes_page.py`, logique pure `domain/term_notes.py`, accès `db/term_note_repository.py`) : un bon est un actif (`assets`, symbole généré `BDC-XXXXXXXX`, devise EUR) ayant une ligne dans `term_note_details` (émetteur, capital, taux annuel en %, dates de souscription et d'échéance, versement des intérêts `MATURITY`/`ANNUAL`, et `repaid_on`/`repaid_capital`/`repaid_interest` une fois remboursé). Pas de cours, pas de transactions : valeur = capital + intérêts courus depuis le dernier versement, au prorata journalier sur 365 jours (`accrued_interest`). `ANNUAL` verse à chaque anniversaire de la souscription (29/02 → 28/02), une dernière période plus courte est proratisée ; `MATURITY` verse tout à l'échéance. Un bon échu non remboursé garde le capital et les intérêts de sa dernière période (« à rembourser », bandeau d'alerte) jusqu'à l'enregistrement du remboursement (`RepayDialog` : date, capital, intérêts réellement reçus, préremplis par `repayment_proposal` ; les intérêts suivent la date tant qu'on n'y touche pas). Un remboursement peut être annulé et un bon supprimé (confirmation). L'écran affiche capital placé, valeur actuelle (intérêts courus), intérêts à percevoir (rendement moyen pondéré), la prochaine échéance, l'échéancier par année (capital + intérêts restant à recevoir), le tableau (bons détenus par échéance puis bons remboursés) et la fiche (durée écoulée, douze tuiles, secteurs et zones, opérations : souscription, intérêts versés, remboursement). Les intérêts annuels versés ne sont pas portés sur un compte cash : seul le remboursement final est enregistré.
   - **Portefeuille** : un bon y entre comme une position d'un titre (`portfolio_transactions` : achat du capital à la souscription, vente au remboursement au prix capital + intérêts reçus ; `portfolio_prices` : valeur en fin de mois et aujourd'hui). La plus-value latente est donc les intérêts courus, la plus-value réalisée les intérêts encaissés. `PortfolioPage(term_notes=…)` est optionnel. La carte de répartition ajoute le périmètre « Bons de caisse » ; un bon remboursé en est exclu.
   - **Exposition** : secteurs et zones comme les autres actifs (`asset_exposures`, supprimés avec le bon), pondérés par la valeur actuelle.
+
+## Paramètres et FMP
+- Table `settings(key, value)` (clé/valeur, `db/settings_repository.py` : `get`, `set` — valeur vide = suppression —, `delete`, `all`) ; la clé d'API FMP est `FMP_API_KEY`, stockée dans la base chiffrée. Écran « Paramètres » (`ui/settings_page.py`, dernier élément du menu) : saisie masquée, Enregistrer / Tester / Effacer.
+- `market/fmp.py` : secteurs et pays d'un fonds (`etf/sector-weightings`, `etf/country-weightings`), `check_api_key`. Contrairement à Yahoo, il **lève `ExposureError`** avec un message lisible (clé refusée, quota, réseau) qui n'inclut jamais la clé. La clé est lue en base dans le thread principal puis passée au fetcher (`partial(..., api_key=…)`) : jamais d'accès SQLite dans le thread de fond.
+- L'import des **fonds** passe par FMP (clé requise, sinon message vers Paramètres) ; les **actions** essaient Yahoo d'abord, puis FMP (`profile` : secteur + code pays ISO) seulement si Yahoo n'a rien et qu'une clé est configurée (`fetch_with_fallback`). Les pays de FMP sont regroupés en zones (inconnus → « Autre »).
+- Tout appel réseau déclenché par l'utilisateur affiche un `Spinner` (`ui/spinner.py`) et toute erreur une popup `QMessageBox.critical` (`ExposureImporter.busy_changed` / `failed`, `SettingsPage`).
+
+## Devise des cours Yahoo
+Yahoo peut coter un titre dans une autre devise que celle de l'instrument (ex. un titre coté en USD suivi en EUR). `market/stocks.fetch_stock_price(symbol, currency)` lit la devise de cotation (`fast_info["currency"]`) et convertit au taux du jour (`USDEUR=X`) vers la devise de l'actif ; sous-unités `GBp`/`GBX`/`ZAc`/`ILA` ramenées à l'unité principale. Si le taux manque, aucun cours n'est enregistré (le dernier cours connu reste affiché). Les obligations (cours en % du nominal) ne sont pas converties.
+
+## Récupération du cours depuis la fenêtre de mise à jour
+Les fenêtres « Mettre à jour le cours » (Actions, Obligations) et « Mettre à jour la VL » (Fonds) affichent un bouton « Récupérer depuis Yahoo » (`ui/quote_import.py`, `YahooFetchButton`) quand l'instrument est suivi via Yahoo (source Yahoo et symbole ; pour un fonds, `_yahoo_symbol`). L'appel tourne hors du thread Qt avec un spinner ; le cours (converti dans la devise de l'actif) remplit le champ et la date du jour, sans rien enregistrer : l'utilisateur valide avec « Enregistrer ». Si le cours enregistré est celui récupéré et non modifié, sa source reste Yahoo (`QuoteDialog.from_yahoo`). Aucune donnée ou une erreur → popup.
 
 ## Libellé de source cliquable
 Dans la fiche détail (Actions, Obligations, Fonds), le badge « Cours/VL Yahoo · date » est un lien
