@@ -50,7 +50,7 @@ from assets_tracker.ui.formatting import (
     signed_money,
 )
 from assets_tracker.ui.portfolio_exposure import PortfolioExposureCard
-from assets_tracker.ui.widgets import Card
+from assets_tracker.ui.widgets import Card, PageContent
 
 _PERIODS = (("3 mois", 3), ("6 mois", 6), ("12 mois", 12), ("Tout", 0))
 
@@ -190,7 +190,7 @@ class PortfolioPage(QWidget):
         self._note.setWordWrap(True)
         self._allocation = QFrame()
         self._allocation.setProperty("role", "card")
-        self._allocation.setMinimumWidth(320)
+        self._allocation.setMinimumWidth(240)
         allocation_layout = QVBoxLayout(self._allocation)
         allocation_layout.setContentsMargins(20, 16, 20, 16)
         allocation_layout.setSpacing(12)
@@ -216,7 +216,7 @@ class PortfolioPage(QWidget):
         self._empty.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._empty.setWordWrap(True)
 
-        content = QWidget()
+        content = PageContent()
         layout = QVBoxLayout(content)
         layout.setContentsMargins(40, 32, 40, 32)
         layout.setSpacing(24)
@@ -229,6 +229,7 @@ class PortfolioPage(QWidget):
 
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         scroll.setFrameShape(QFrame.Shape.NoFrame)
         scroll.setWidget(content)
         outer = QVBoxLayout(self)

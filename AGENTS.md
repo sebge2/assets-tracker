@@ -118,3 +118,10 @@ mypy src                         # typage strict
 - Tout calcul financier a un test dans `tests/` avant d'être branché à l'UI.
 - Tests UI avec `pytest-qt` ; mocker `market/` (pas de réseau en test).
 - Commits courts, à l'impératif.
+
+## Pages défilantes
+
+Le contenu d'une page (Portefeuille, Matières premières, Actions, Obligations, Fonds) est un
+`PageContent` (`ui/widgets.py`) dans un `QScrollArea` sans barre horizontale : la page s'adapte à la
+largeur de la fenêtre et ne défile que verticalement. La fiche passe à droite du tableau à partir de
+`WIDE_LAYOUT` (1340 px), sinon dessous (largeur minimale 280 px).

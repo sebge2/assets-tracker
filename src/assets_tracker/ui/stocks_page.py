@@ -91,7 +91,7 @@ from assets_tracker.ui.formatting import (
     parse_decimal,
     signed_money,
 )
-from assets_tracker.ui.widgets import RIGHT, Card, fit_height, prepare_table
+from assets_tracker.ui.widgets import RIGHT, Card, PageContent, fit_height, prepare_table
 
 CURRENCY = "EUR"
 
@@ -615,7 +615,7 @@ class StocksPage(QWidget):
         self._body.addWidget(self._table, 1, Qt.AlignmentFlag.AlignTop)
         self._body.addWidget(self._detail, 0, Qt.AlignmentFlag.AlignTop)
 
-        content = QWidget()
+        content = PageContent()
         layout = QVBoxLayout(content)
         layout.setContentsMargins(40, 32, 40, 32)
         layout.setSpacing(24)
@@ -629,6 +629,7 @@ class StocksPage(QWidget):
 
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         scroll.setFrameShape(QFrame.Shape.NoFrame)
         scroll.setWidget(content)
         outer = QVBoxLayout(self)
@@ -641,7 +642,7 @@ class StocksPage(QWidget):
     def _build_detail(self) -> QFrame:
         frame = QFrame()
         frame.setProperty("role", "card")
-        frame.setMinimumWidth(340)
+        frame.setMinimumWidth(280)
         layout = QVBoxLayout(frame)
         layout.setContentsMargins(20, 18, 20, 18)
         layout.setSpacing(16)
@@ -1223,5 +1224,5 @@ class StocksPage(QWidget):
         if wide:
             self._detail.setFixedWidth(DETAIL_WIDTH)
         else:
-            self._detail.setMinimumWidth(340)
+            self._detail.setMinimumWidth(280)
             self._detail.setMaximumWidth(16777215)

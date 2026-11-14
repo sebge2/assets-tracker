@@ -252,7 +252,7 @@ class PortfolioExposureCard(QFrame):
             f"QFrame#exposureDetail {{ background: {theme.RAISED}; "
             f"border: 1px solid {theme.BORDER}; border-radius: 12px; }}"
         )
-        self._detail.setMinimumWidth(320)
+        self._detail.setMinimumWidth(260)
         detail_layout = QVBoxLayout(self._detail)
         detail_layout.setContentsMargins(18, 18, 18, 18)
         detail_layout.setSpacing(12)

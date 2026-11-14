@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import QSize, Qt
 from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
     QAbstractItemView,
@@ -12,11 +12,23 @@ from PySide6.QtWidgets import (
     QTableWidget,
     QTableWidgetItem,
     QVBoxLayout,
+    QWidget,
 )
 
 from assets_tracker.ui import theme
 
 RIGHT = Qt.AlignmentFlag.AlignRight
+
+
+class PageContent(QWidget):
+    """Contenu d'une page défilante : s'adapte à la largeur, ne défile que verticalement.
+
+    Sans cela, la largeur minimale cumulée des widgets enfants dépasse vite la fenêtre
+    et la zone de défilement ajoute une barre horizontale.
+    """
+
+    def minimumSizeHint(self) -> QSize:  # noqa: N802 (API Qt)
+        return QSize(0, super().minimumSizeHint().height())
 
 
 def table_cell(

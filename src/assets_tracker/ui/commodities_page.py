@@ -56,7 +56,14 @@ from assets_tracker.ui.formatting import (
     short_datetime,
     signed_money,
 )
-from assets_tracker.ui.widgets import RIGHT, Card, fit_height, prepare_table, table_cell
+from assets_tracker.ui.widgets import (
+    RIGHT,
+    Card,
+    PageContent,
+    fit_height,
+    prepare_table,
+    table_cell,
+)
 
 CURRENCY = "EUR"
 REFRESH_EVERY_MS = 15 * 60 * 1000
@@ -302,7 +309,7 @@ class CommoditiesPage(QWidget):
         self._body.addWidget(self._table, 1, Qt.AlignmentFlag.AlignTop)
         self._body.addWidget(self._detail, 0, Qt.AlignmentFlag.AlignTop)
 
-        content = QWidget()
+        content = PageContent()
         layout = QVBoxLayout(content)
         layout.setContentsMargins(40, 32, 40, 32)
         layout.setSpacing(24)
@@ -316,6 +323,7 @@ class CommoditiesPage(QWidget):
 
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         scroll.setFrameShape(QFrame.Shape.NoFrame)
         scroll.setWidget(content)
         outer = QVBoxLayout(self)
@@ -328,7 +336,7 @@ class CommoditiesPage(QWidget):
     def _build_detail(self) -> QFrame:
         frame = QFrame()
         frame.setProperty("role", "card")
-        frame.setMinimumWidth(340)
+        frame.setMinimumWidth(280)
         layout = QVBoxLayout(frame)
         layout.setContentsMargins(20, 18, 20, 18)
         layout.setSpacing(14)
@@ -759,7 +767,7 @@ class CommoditiesPage(QWidget):
         if wide:
             self._detail.setFixedWidth(DETAIL_WIDTH)
         else:
-            self._detail.setMinimumWidth(340)
+            self._detail.setMinimumWidth(280)
             self._detail.setMaximumWidth(16777215)
         self._body.setStretchFactor(self._table, 1)
 
