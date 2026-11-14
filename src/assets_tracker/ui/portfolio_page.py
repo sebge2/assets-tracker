@@ -367,8 +367,8 @@ class PortfolioPage(QWidget):
     def _exposed_assets(self, portfolio: Portfolio) -> list[ExposedAsset]:
         """Valeur en EUR de chaque position ouverte (dernier taux connu) et ses répartitions.
 
-        Les devises sans taux sont exclues, comme dans la valeur totale ; le cash et les matières
-        premières entrent en un seul bloc chacun (leur valeur vient de la répartition par type).
+        Les devises sans taux sont exclues, comme dans la valeur totale ; les matières premières
+        entrent en un seul bloc, le cash n'y figure pas (leur valeur vient de la répartition par type).
         """
         if self._exposure is None:
             return []
@@ -412,14 +412,12 @@ class PortfolioPage(QWidget):
                         asset_id,
                     )
                 )
-        blocks = {
-            InstrumentType.CASH: "Comptes cash",
-            InstrumentType.COMMODITY: "Matières premières",
-        }
+        # Les liquidités n'entrent pas dans la répartition ; les matières premières, en un bloc.
         for part in portfolio.slices:
-            if part.asset_type in blocks:
-                name = blocks[part.asset_type]
-                assets.append(ExposedAsset(name, part.asset_type, part.value, (), ()))
+            if part.asset_type is InstrumentType.COMMODITY:
+                assets.append(
+                    ExposedAsset("Matières premières", part.asset_type, part.value, (), ())
+                )
         return assets
 
     # -- évolution --

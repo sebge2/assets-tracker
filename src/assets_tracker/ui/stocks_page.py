@@ -75,6 +75,8 @@ from assets_tracker.ui.bonds_page import (
     fetch_rates,
 )
 from assets_tracker.ui.commodity_chart import PositionChart
+from assets_tracker.market.exposure import ExposureFetcher
+from assets_tracker.ui.exposure_import import ExposureImporter
 from assets_tracker.ui.exposure_widgets import (
     ExposureSection,
     ExposureSummary,
@@ -525,6 +527,7 @@ class StocksPage(QWidget):
         fx: FxRepository,
         *,
         exposure: ExposureRepository | None = None,
+        exposure_fetcher: ExposureFetcher | None = None,
         today: Callable[[], date] = date.today,
         now: Callable[[], datetime] = datetime.now,
         quote_fetcher: QuoteFetcher = fetch_stock_price,
@@ -536,6 +539,13 @@ class StocksPage(QWidget):
         self._repository = repository
         self._fx = fx
         self._exposure = exposure
+        self._importer: ExposureImporter | None = None
+        if exposure is not None and exposure_fetcher is not None:
+            self._importer = ExposureImporter(
+                exposure, exposure_fetcher, background=background, parent=self
+            )
+            self._importer.changed.connect(self.refresh)
+            self._importer.manual_finished.connect(self._on_import_finished)
         self._today = today
         self._now = now
         self._quote_fetcher = quote_fetcher
@@ -712,6 +722,9 @@ class StocksPage(QWidget):
         layout.addLayout(grid)
 
         self._exposure_section = ExposureSection()
+        self._exposure_section.import_requested.connect(
+            lambda: self._import_exposure_for(self._selected_view())
+        )
         self._exposure_section.edit_requested.connect(
             lambda: self._edit_exposure(self._selected_view())
         )
@@ -985,6 +998,7 @@ class StocksPage(QWidget):
             sectors = self._exposure.get(view.asset_id, ExposureKind.SECTOR)
             zones = self._exposure.get(view.asset_id, ExposureKind.ZONE)
         self._exposure_section.setVisible(self._exposure is not None)
+        self._exposure_section.set_import_available(self._importer is not None)
         self._exposure_section.set_data(sectors, zones)
         self._tiles["Secteur principal"].setText(main_label(sectors))
         self._tiles["Zone principale"].setText(main_label(zones))
@@ -1134,6 +1148,34 @@ class StocksPage(QWidget):
     def select(self, asset_id: int) -> None:
         """Choisit la ligne affichée dans la fiche (appliquée à la prochaine actualisation)."""
         self._selected = asset_id
+
+    def _import_exposure_for(self, view: StockView | None) -> None:
+        if view is None or self._importer is None or self._exposure is None:
+            return
+        symbol = view.holding.asset.symbol
+        if not symbol:
+            QMessageBox.information(
+                self, "Import impossible", "Cet actif n'a pas de symbole Yahoo."
+            )
+            return
+        if any(self._exposure.get(view.asset_id, kind) for kind in ExposureKind):
+            answer = QMessageBox.question(
+                self,
+                "Importer depuis Yahoo",
+                "Les répartitions fournies par Yahoo remplaceront celles déjà saisies. Continuer ?",
+            )
+            if answer != QMessageBox.StandardButton.Yes:
+                return
+        self._importer.import_now(view.asset_id, symbol)
+
+    def _on_import_finished(self, asset_id: int, found: bool) -> None:
+        if not found:
+            QMessageBox.information(
+                self,
+                "Import impossible",
+                "Yahoo ne fournit pas de répartition pour cet actif. "
+                "Saisissez-la avec « Modifier ».",
+            )
 
     def _edit_exposure(self, view: StockView | None) -> None:
         if view is None or self._exposure is None:

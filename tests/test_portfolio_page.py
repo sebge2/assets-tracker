@@ -16,6 +16,7 @@ from assets_tracker.db.cash_repository import CashRepository
 from assets_tracker.db.commodity_repository import CommodityRepository
 from assets_tracker.db.connection import connect
 from assets_tracker.db.fund_repository import FundRepository
+from assets_tracker.db.exposure_repository import ExposureRepository
 from assets_tracker.db.fx_repository import FxRepository
 from assets_tracker.db.stock_repository import StockRepository
 from assets_tracker.db.term_note_repository import TermNoteRepository
@@ -23,7 +24,7 @@ from assets_tracker.domain.bonds import BondDetails, CouponFrequency
 from assets_tracker.domain.cash import CashAccount, InterestFrequency, MovementKind
 from assets_tracker.domain.commodities import CommodityDetails, CommodityFamily, CommodityForm
 from assets_tracker.domain.funds import FundDetails, ValuationSource
-from assets_tracker.domain.models import Transaction, TransactionType
+from assets_tracker.domain.models import InstrumentType, Transaction, TransactionType
 from assets_tracker.domain.stocks import StockDetails
 from assets_tracker.domain.term_notes import InterestPayout, Repayment, TermNoteDetails
 from assets_tracker.ui.allocation_donut import AllocationDonut, DonutSlice
@@ -324,3 +325,24 @@ def test_a_repaid_term_note_leaves_the_total_and_realizes_its_interest(
     assert page._portfolio is not None
     assert page._portfolio.summary.total == 0
     assert page._portfolio.summary.realized == D(181)
+
+
+def test_cash_is_left_out_of_the_sector_and_zone_breakdown(qtbot: QtBot, conn: Any) -> None:
+    fill(conn)
+    page = PortfolioPage(
+        CashRepository(conn),
+        CommodityRepository(conn),
+        FundRepository(conn),
+        BondRepository(conn),
+        StockRepository(conn),
+        FxRepository(conn),
+        exposure=ExposureRepository(conn),
+        today=lambda: TODAY,
+    )
+    qtbot.addWidget(page)
+
+    assert page._portfolio is not None
+    assert "CASH" in [s.asset_type.value for s in page._portfolio.slices]  # toujours dans le total
+    exposed = page._exposed_assets(page._portfolio)
+    assert InstrumentType.CASH not in [asset.instrument for asset in exposed]
+    assert [asset.name for asset in exposed] == ["Matières premières"]

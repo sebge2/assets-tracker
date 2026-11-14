@@ -122,16 +122,23 @@ class ExposureSection(QWidget):
     """Section « Secteurs et zones » de la fiche d'un actif, avec le bouton Modifier."""
 
     edit_requested = Signal()
+    import_requested = Signal()
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         caption = QLabel("SECTEURS ET ZONES")
         caption.setProperty("role", "caption")
+        self._import = QPushButton("Importer")
+        self._import.setAccessibleName("Importer les secteurs et zones depuis Yahoo")
+        self._import.setToolTip("Récupère les secteurs et zones depuis Yahoo Finance")
+        self._import.clicked.connect(lambda _=False: self.import_requested.emit())
+        self._import.setVisible(False)
         self._edit = QPushButton("Modifier")
         self._edit.setAccessibleName("Modifier les secteurs et zones")
         self._edit.clicked.connect(lambda _=False: self.edit_requested.emit())
         head = QHBoxLayout()
         head.addWidget(caption, 1)
+        head.addWidget(self._import)
         head.addWidget(self._edit)
         self._bars: dict[ExposureKind, tuple[BreakdownBar, QLabel]] = {}
         layout = QVBoxLayout(self)
@@ -147,6 +154,10 @@ class ExposureSection(QWidget):
             layout.addWidget(bar)
             layout.addWidget(legend)
             self._bars[kind] = (bar, legend)
+
+    def set_import_available(self, available: bool) -> None:
+        """Affiche le bouton « Importer » (données Yahoo) quand la page sait le faire."""
+        self._import.setVisible(available)
 
     def set_data(self, sectors: Sequence[ExposureEntry], zones: Sequence[ExposureEntry]) -> None:
         for kind, entries in ((ExposureKind.SECTOR, sectors), (ExposureKind.ZONE, zones)):

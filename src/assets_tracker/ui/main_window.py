@@ -24,6 +24,7 @@ from assets_tracker.db.fx_repository import FxRepository
 from assets_tracker.db.stock_repository import StockRepository
 from assets_tracker.db.term_note_repository import TermNoteRepository
 from assets_tracker.domain.models import InstrumentType
+from assets_tracker.market.exposure import fetch_exposure
 from assets_tracker.ui import icons, theme
 from assets_tracker.ui.bonds_page import BondsPage
 from assets_tracker.ui.cash_page import CashPage
@@ -63,10 +64,17 @@ class MainWindow(QMainWindow):
         self.cash_page = CashPage(cash_repository)
         self._stack.addWidget(self.portfolio_page)
         self.commodities_page = CommoditiesPage(commodity_repository)
-        self.funds_page = FundsPage(fund_repository, exposure=exposure_repository)
+        self.funds_page = FundsPage(
+            fund_repository, exposure=exposure_repository, exposure_fetcher=fetch_exposure
+        )
         self.bonds_page = BondsPage(bond_repository, fx_repository, exposure=exposure_repository)
         self.term_notes_page = TermNotesPage(term_note_repository, exposure=exposure_repository)
-        self.stocks_page = StocksPage(stock_repository, fx_repository, exposure=exposure_repository)
+        self.stocks_page = StocksPage(
+            stock_repository,
+            fx_repository,
+            exposure=exposure_repository,
+            exposure_fetcher=fetch_exposure,
+        )
         self.projection_page = ProjectionPage()
         self.portfolio_page.asset_requested.connect(self._open_asset)
         self._stack.addWidget(self.cash_page)
