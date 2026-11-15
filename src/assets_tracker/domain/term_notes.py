@@ -9,6 +9,7 @@ souscription (`ANNUAL`, dernière période courte au prorata si la durée n'est 
 from __future__ import annotations
 
 import calendar
+import re
 from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import date
@@ -35,6 +36,7 @@ __all__ = [
     "interest_payments",
     "interest_total",
     "interest_to_receive",
+    "normalize_isin",
     "ladder",
     "next_maturity",
     "note_totals",
@@ -67,6 +69,7 @@ class TermNoteDetails:
     start: date
     end: date
     payout: InterestPayout
+    isin: str = ""  # code ISIN, facultatif (vide = non renseigné)
 
 
 @dataclass(frozen=True, slots=True)
@@ -312,6 +315,24 @@ def ladder(
     return dict(sorted(years.items()))
 
 
+ISIN_PATTERN = re.compile(r"[A-Z]{2}[A-Z0-9]{9}[0-9]")
+
+
+def normalize_isin(text: str) -> str:
+    """Code ISIN en majuscules, sans espaces ; chaîne vide si non renseigné.
+
+    Lève `ValueError` si le format est invalide : 2 lettres (pays), 9 caractères alphanumériques
+    et 1 chiffre de contrôle (12 caractères).
+    """
+    isin = "".join(text.split()).upper()
+    if isin and not ISIN_PATTERN.fullmatch(isin):
+        raise ValueError(
+            "Le code ISIN doit comporter 12 caractères : 2 lettres, 9 caractères "
+            "alphanumériques et 1 chiffre (ex. BE0000000000)."
+        )
+    return isin
+
+
 def validate_details(name: str, details: TermNoteDetails) -> None:
     if not name.strip():
         raise ValueError("Le nom du bon de caisse est obligatoire.")
@@ -323,6 +344,7 @@ def validate_details(name: str, details: TermNoteDetails) -> None:
         raise ValueError("Le taux doit être compris entre 0 et 100 %.")
     if details.end <= details.start:
         raise ValueError("L'échéance doit être postérieure à la souscription.")
+    normalize_isin(details.isin)
 
 
 def validate_repayment(details: TermNoteDetails, repayment: Repayment) -> None:

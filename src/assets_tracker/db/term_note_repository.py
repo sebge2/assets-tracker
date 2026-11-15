@@ -13,6 +13,7 @@ from assets_tracker.domain.term_notes import (
     InterestPayout,
     Repayment,
     TermNoteDetails,
+    normalize_isin,
     validate_details,
     validate_repayment,
 )
@@ -56,8 +57,8 @@ class TermNoteRepository:
             asset_id = int(cursor.lastrowid)
             self._conn.execute(
                 "INSERT INTO term_note_details "
-                "(asset_id, issuer, capital, rate, start_date, end_date, payout) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                "(asset_id, issuer, capital, rate, start_date, end_date, payout, isin) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     asset_id,
                     details.issuer.strip(),
@@ -66,6 +67,7 @@ class TermNoteRepository:
                     details.start.isoformat(),
                     details.end.isoformat(),
                     details.payout.value,
+                    normalize_isin(details.isin) or None,
                 ),
             )
         holding = self.get_holding(asset_id)
@@ -83,7 +85,7 @@ class TermNoteRepository:
             self._conn.execute("UPDATE assets SET name = ? WHERE id = ?", (name.strip(), asset_id))
             self._conn.execute(
                 "UPDATE term_note_details SET issuer = ?, capital = ?, rate = ?, "
-                "start_date = ?, end_date = ?, payout = ? WHERE asset_id = ?",
+                "start_date = ?, end_date = ?, payout = ?, isin = ? WHERE asset_id = ?",
                 (
                     details.issuer.strip(),
                     str(details.capital),
@@ -91,6 +93,7 @@ class TermNoteRepository:
                     details.start.isoformat(),
                     details.end.isoformat(),
                     details.payout.value,
+                    normalize_isin(details.isin) or None,
                     asset_id,
                 ),
             )
@@ -161,6 +164,7 @@ class TermNoteRepository:
                 date.fromisoformat(row["start_date"]),
                 date.fromisoformat(row["end_date"]),
                 InterestPayout(row["payout"]),
+                row["isin"] or "",
             ),
             repayment,
         )

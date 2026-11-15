@@ -170,6 +170,7 @@ CREATE TABLE IF NOT EXISTS term_note_details (
     start_date       TEXT NOT NULL,           -- ISO 8601
     end_date         TEXT NOT NULL,
     payout           TEXT NOT NULL CHECK (payout IN ('MATURITY', 'ANNUAL')),
+    isin             TEXT,                    -- code ISIN facultatif
     repaid_on        TEXT,
     repaid_capital   TEXT,
     repaid_interest  TEXT

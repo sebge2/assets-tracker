@@ -307,6 +307,8 @@ class TermNoteDialog(QDialog):
         details = holding.details if holding else None
         self._name = QLineEdit(holding.asset.name if holding else "")
         self._issuer = QLineEdit(details.issuer if details else "")
+        self._isin = QLineEdit(details.isin if details else "")
+        self._isin.setPlaceholderText("BE0000000000")
         self._capital = QLineEdit(_plain(details.capital) if details else "")
         self._rate = QLineEdit(_plain(details.rate) if details else "")
         self._start = date_edit(details.start if details else today)
@@ -351,7 +353,9 @@ class TermNoteDialog(QDialog):
         layout.setContentsMargins(28, 28, 28, 28)
         layout.setSpacing(16)
         layout.addWidget(title)
-        layout.addWidget(labeled("Nom", self._name))
+        layout.addWidget(
+            row(labeled("Nom", self._name), labeled("Code ISIN (facultatif)", self._isin))
+        )
         layout.addWidget(row(labeled("Émetteur", self._issuer), labeled("Devise", _currency())))
         layout.addWidget(
             row(labeled("Capital placé (€)", self._capital), labeled("Taux annuel (%)", self._rate))
@@ -382,6 +386,7 @@ class TermNoteDialog(QDialog):
             to_date(self._start),
             to_date(self._end),
             InterestPayout(self._payout.currentData()),
+            self._isin.text(),
         )
 
     def form(self) -> tuple[str, TermNoteDetails]:
@@ -879,7 +884,7 @@ class TermNotesPage(QWidget):
     def _fill_row(self, table_row: int, view: NoteView, today: date) -> None:
         details, asset = view.details, view.holding.asset
         color = theme.SERIES[3] if not view.repaid else theme.TEXT_SUBTLE
-        meta = f"{details.issuer} · {term_label(details)}"
+        meta = " · ".join(filter(None, (details.issuer, details.isin, term_label(details))))
         self._table.setCellWidget(
             table_row,
             0,
@@ -930,7 +935,17 @@ class TermNotesPage(QWidget):
         details, asset, value = view.details, view.holding.asset, view.value
         self._d_name.setText(asset.name)
         self._d_sub.setText(
-            f"{details.issuer} · {term_label(details)} · intérêts {details.payout.label}"
+            " · ".join(
+                filter(
+                    None,
+                    (
+                        details.issuer,
+                        details.isin,
+                        term_label(details),
+                        f"intérêts {details.payout.label}",
+                    ),
+                )
+            )
         )
         if view.repaid:
             badge, warn = self._badge_text(view, today), False

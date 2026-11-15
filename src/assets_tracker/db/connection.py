@@ -74,6 +74,8 @@ def _migrate(conn: Any) -> None:
         _migrate_to_1(conn)
     if version < 2:
         _migrate_to_2(conn)
+    if version < 3:
+        _migrate_to_3(conn)
 
 
 def _migrate_to_1(conn: Any) -> None:
@@ -117,3 +119,12 @@ def _migrate_to_2(conn: Any) -> None:
             "FROM prices p JOIN commodity_details d ON d.asset_id = p.asset_id"
         )
     conn.execute("PRAGMA user_version = 2")
+
+
+def _migrate_to_3(conn: Any) -> None:
+    """Les bons de caisse ont un code ISIN facultatif (colonne `isin`)."""
+    columns = {row["name"] for row in conn.execute("PRAGMA table_info(term_note_details)")}
+    if "isin" not in columns:
+        with conn:
+            conn.execute("ALTER TABLE term_note_details ADD COLUMN isin TEXT")
+    conn.execute("PRAGMA user_version = 3")
