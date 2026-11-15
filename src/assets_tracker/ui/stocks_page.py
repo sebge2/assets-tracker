@@ -36,6 +36,7 @@ from assets_tracker.db.exposure_repository import ExposureRepository
 from assets_tracker.db.fx_repository import FxRepository
 from assets_tracker.db.stock_repository import StockHolding, StockRepository
 from assets_tracker.domain.exposure import ExposureEntry, ExposureKind, exposure_breakdown
+from assets_tracker.domain.search import matches
 from assets_tracker.domain.funds import FundValue, ValuationSource
 from assets_tracker.domain.fx import currencies_to_refresh, rate_for
 from assets_tracker.domain.models import Position, Transaction, TransactionType
@@ -85,6 +86,7 @@ from assets_tracker.ui.exposure_widgets import (
     main_label,
 )
 from assets_tracker.ui.form_helpers import date_edit, labeled, row, to_date
+from assets_tracker.ui.search_filter import SearchBox, table_with_search
 from assets_tracker.ui.quote_import import PriceFetcher, YahooFetchButton, price_text
 from assets_tracker.ui.formatting import (
     MINUS,
@@ -597,6 +599,10 @@ class StocksPage(QWidget):
         self._background = background
         self._selected: int | None = None
         self._views: list[StockView] = []
+        self._shown: list[StockView] = []  # lignes visibles après filtre
+        self._search = SearchBox()
+        self._no_match = QLabel()
+        self._search.textChanged.connect(self._on_filter_changed)
         self._pending: list[StockView] = []
         self._failed: set[int] = set()  # Yahoo n'a pas répondu pour ces actions
         self._attempted: set[int] = set()  # déjà interrogées depuis le lancement
@@ -666,7 +672,11 @@ class StocksPage(QWidget):
         self._detail = self._build_detail()
         self._body = QBoxLayout(QBoxLayout.Direction.TopToBottom)
         self._body.setSpacing(16)
-        self._body.addWidget(self._table, 1, Qt.AlignmentFlag.AlignTop)
+        self._body.addWidget(
+            table_with_search(self._table, self._search, self._no_match),
+            1,
+            Qt.AlignmentFlag.AlignTop,
+        )
         self._body.addWidget(self._detail, 0, Qt.AlignmentFlag.AlignTop)
 
         content = PageContent()
@@ -905,10 +915,20 @@ class StocksPage(QWidget):
         )
         self._exposure_card.set_data(sectors, zones)
 
+    def _on_filter_changed(self, _text: str) -> None:
+        self._fill_table()
+        self._show_selected()
+
     def _fill_table(self) -> None:
+        query = self._search.text()
+        self._shown = [v for v in self._views if matches(query, v.holding.asset.name, v.holding.asset.symbol)]
+        self._search.setVisible(bool(self._views))
+        self._no_match.setVisible(bool(self._views) and not self._shown)
+        if self._shown and self._selected not in {v.asset_id for v in self._shown}:
+            self._selected = self._shown[0].asset_id
         self._table.blockSignals(True)
-        self._table.setRowCount(len(self._views))
-        for table_row, view in enumerate(self._views):
+        self._table.setRowCount(len(self._shown))
+        for table_row, view in enumerate(self._shown):
             self._fill_row(table_row, view)
             if view.asset_id == self._selected:
                 self._table.selectRow(table_row)
@@ -1195,8 +1215,8 @@ class StocksPage(QWidget):
     # -- interactions --
 
     def _on_row_changed(self, current_row: int, *_: int) -> None:
-        if 0 <= current_row < len(self._views):
-            self._selected = self._views[current_row].asset_id
+        if 0 <= current_row < len(self._shown):
+            self._selected = self._shown[current_row].asset_id
             self._show_selected()
 
     def select(self, asset_id: int) -> None:

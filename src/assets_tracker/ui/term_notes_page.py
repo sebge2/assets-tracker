@@ -34,6 +34,7 @@ from PySide6.QtWidgets import (
 from assets_tracker.db.exposure_repository import ExposureRepository
 from assets_tracker.db.term_note_repository import TermNoteHolding, TermNoteRepository
 from assets_tracker.domain.exposure import ExposureEntry, ExposureKind, exposure_breakdown
+from assets_tracker.domain.search import matches
 from assets_tracker.domain.term_notes import (
     DUE_SOON_DAYS,
     InterestPayout,
@@ -57,6 +58,7 @@ from assets_tracker.ui.exposure_widgets import (
     main_label,
 )
 from assets_tracker.ui.form_helpers import date_edit, labeled, row, to_date
+from assets_tracker.ui.search_filter import SearchBox, table_with_search
 from assets_tracker.ui.formatting import (
     NBSP,
     compact_money,
@@ -563,6 +565,10 @@ class TermNotesPage(QWidget):
         self._today = today
         self._selected: int | None = None
         self._views: list[NoteView] = []
+        self._shown: list[NoteView] = []  # lignes visibles après filtre
+        self._search = SearchBox()
+        self._no_match = QLabel()
+        self._search.textChanged.connect(self._on_filter_changed)
 
         title = QLabel("Bons de caisse")
         title.setProperty("role", "title")
@@ -649,7 +655,11 @@ class TermNotesPage(QWidget):
         self._detail = self._build_detail()
         self._body = QBoxLayout(QBoxLayout.Direction.TopToBottom)
         self._body.setSpacing(16)
-        self._body.addWidget(self._table, 1, Qt.AlignmentFlag.AlignTop)
+        self._body.addWidget(
+            table_with_search(self._table, self._search, self._no_match),
+            1,
+            Qt.AlignmentFlag.AlignTop,
+        )
         self._body.addWidget(self._detail, 0, Qt.AlignmentFlag.AlignTop)
 
         content = PageContent()
@@ -863,10 +873,20 @@ class TermNotesPage(QWidget):
     def _selected_view(self) -> NoteView | None:
         return next((v for v in self._views if v.asset_id == self._selected), None)
 
+    def _on_filter_changed(self, _text: str) -> None:
+        self._fill_table(self._today())
+        self._show_selected(self._today())
+
     def _fill_table(self, today: date) -> None:
+        query = self._search.text()
+        self._shown = [v for v in self._views if matches(query, v.holding.asset.name, v.details.isin, v.details.issuer)]
+        self._search.setVisible(bool(self._views))
+        self._no_match.setVisible(bool(self._views) and not self._shown)
+        if self._shown and self._selected not in {v.asset_id for v in self._shown}:
+            self._selected = self._shown[0].asset_id
         self._table.blockSignals(True)
-        self._table.setRowCount(len(self._views))
-        for table_row, view in enumerate(self._views):
+        self._table.setRowCount(len(self._shown))
+        for table_row, view in enumerate(self._shown):
             self._fill_row(table_row, view, today)
             if view.asset_id == self._selected:
                 self._table.selectRow(table_row)
@@ -1082,8 +1102,8 @@ class TermNotesPage(QWidget):
     # -- interactions --
 
     def _on_row_changed(self, current_row: int, *_: int) -> None:
-        if 0 <= current_row < len(self._views):
-            self._selected = self._views[current_row].asset_id
+        if 0 <= current_row < len(self._shown):
+            self._selected = self._shown[current_row].asset_id
             self._show_selected(self._today())
 
     def select(self, asset_id: int) -> None:

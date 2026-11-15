@@ -133,6 +133,9 @@ Yahoo peut coter un titre dans une autre devise que celle de l'instrument (ex. u
 ## Récupération du cours depuis la fenêtre de mise à jour
 Les fenêtres « Mettre à jour le cours » (Actions, Obligations) et « Mettre à jour la VL » (Fonds) affichent un bouton « Récupérer depuis Yahoo » (`ui/quote_import.py`, `YahooFetchButton`) quand l'instrument est suivi via Yahoo (source Yahoo et symbole ; pour un fonds, `_yahoo_symbol`). L'appel tourne hors du thread Qt avec un spinner ; le cours (converti dans la devise de l'actif) remplit le champ et la date du jour, sans rien enregistrer : l'utilisateur valide avec « Enregistrer ». Si le cours enregistré est celui récupéré et non modifié, sa source reste Yahoo (`QuoteDialog.from_yahoo`). Aucune donnée ou une erreur → popup.
 
+## Filtre des listes d'instruments
+Les écrans Actions, Obligations, Fonds et Bons de caisse ont un champ « Filtrer par nom ou ISIN » au-dessus du tableau (`ui/search_filter.py`, logique pure `domain/search.py` : `matches` ignore casse, accents et espaces d'un ISIN ; tous les mots doivent correspondre). Il porte sur le nom et l'identifiant saisi (ISIN ou ticker, `asset.symbol`) ; pour un bon de caisse, sur le nom, l'ISIN et l'émetteur. Le filtre ne touche que le tableau (`self._shown`) : cartes, alertes et totaux restent calculés sur tous les instruments. Si la ligne sélectionnée est masquée, la première ligne visible est sélectionnée.
+
 ## Libellé de source cliquable
 Dans la fiche détail (Actions, Obligations, Fonds), le badge « Cours/VL Yahoo · date » est un lien
 vers `https://finance.yahoo.com/quote/<symbole>` (`source_badge_html` / `yahoo_quote_url` dans

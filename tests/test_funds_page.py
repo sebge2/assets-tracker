@@ -402,3 +402,29 @@ def test_edit_exposure_weights_the_summary_by_fund_value(
     assert page._tiles["Zone principale"].text() == f"Monde · 100{NBSP}%"
     legend = page._exposure_card.legend_text(ExposureKind.SECTOR)
     assert "Technologie" in legend and "Santé" in legend and "États" in legend
+
+
+# --- filtre ------------------------------------------------------------------
+
+
+def test_filter_by_name_or_isin_narrows_the_table_only(page: FundsPage) -> None:
+    page._search.setText("obligations")
+    assert page._table.rowCount() == 1
+    assert "Obligations Euro" in page._table.cellWidget(0, 0).text()
+    assert page._value_card._sub.text() == "2 fonds"  # les totaux ne dépendent pas du filtre
+
+    page._search.setText("fr0010756098")
+    assert page._table.rowCount() == 1
+    assert "Actions Monde" in page._table.cellWidget(0, 0).text()
+    assert page._selected is not None
+    assert page._d_name.text() == "Actions Monde"
+
+
+def test_filter_without_result_shows_message_and_clearing_restores(page: FundsPage) -> None:
+    page._search.setText("zzz")
+    assert page._table.rowCount() == 0
+    assert not page._no_match.isHidden()
+
+    page._search.setText("")
+    assert page._table.rowCount() == 2
+    assert page._no_match.isHidden()
