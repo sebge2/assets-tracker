@@ -136,6 +136,9 @@ Les fenêtres « Mettre à jour le cours » (Actions, Obligations) et « Mettre 
 ## Filtre des listes d'instruments
 Les écrans Actions, Obligations, Fonds et Bons de caisse ont un champ « Filtrer par nom ou ISIN » au-dessus du tableau (`ui/search_filter.py`, logique pure `domain/search.py` : `matches` ignore casse, accents et espaces d'un ISIN ; tous les mots doivent correspondre). Il porte sur le nom et l'identifiant saisi (ISIN ou ticker, `asset.symbol`) ; pour un bon de caisse, sur le nom, l'ISIN et l'émetteur. Le filtre ne touche que le tableau (`self._shown`) : cartes, alertes et totaux restent calculés sur tous les instruments. Si la ligne sélectionnée est masquée, la première ligne visible est sélectionnée.
 
+## Historique des cotations
+Un bouton « Historique des cotations… » (fiche des Actions, Obligations, Fonds ; « Historique… » pour les Matières premières) ouvre `QuoteHistoryDialog` (`ui/quote_history.py`) : courbe (`PositionChart`), tuiles (variation, dernier, plus bas, plus haut, nombre de cotations) et liste des cotations, avec bascule de période 1 mois / 3 mois / 6 mois / 1 an / 5 ans / Tout (défaut). Les cotations viennent de la table `valuations` (`quote_history`, `nav_history`, `holding.history`) ; logique pure dans `domain/history.py` (`PERIODS`, `in_period`, `period_stats`, un cours par jour). Les périodes sont relatives à aujourd'hui ; sans cotation sur la période, un message l'indique.
+
 ## Libellé de source cliquable
 Dans la fiche détail (Actions, Obligations, Fonds), le badge « Cours/VL Yahoo · date » est un lien
 vers `https://finance.yahoo.com/quote/<symbole>` (`source_badge_html` / `yahoo_quote_url` dans

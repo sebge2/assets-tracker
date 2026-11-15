@@ -40,6 +40,7 @@ from assets_tracker.domain.valuation import assets_to_refresh
 from assets_tracker.market.commodities import fetch_holding_price
 from assets_tracker.ui import icons, theme
 from assets_tracker.ui.commodity_chart import PositionChart
+from assets_tracker.ui.quote_history import QuoteHistoryDialog
 from assets_tracker.ui.commodity_dialogs import (
     EditPositionDialog,
     NewPositionDialog,
@@ -392,6 +393,8 @@ class CommoditiesPage(QWidget):
         self._buy_button.clicked.connect(lambda: self._trade(TransactionType.BUY))
         self._sell_button = QPushButton("Vendre")
         self._sell_button.clicked.connect(lambda: self._trade(TransactionType.SELL))
+        self._history_button = QPushButton("Historique…")
+        self._history_button.clicked.connect(self._show_history)
         self._edit_button = QToolButton()
         self._edit_button.setProperty("role", "icon")
         self._edit_button.setIcon(icons.icon("edit"))
@@ -403,6 +406,7 @@ class CommoditiesPage(QWidget):
         actions.setSpacing(8)
         actions.addWidget(self._buy_button)
         actions.addWidget(self._sell_button)
+        actions.addWidget(self._history_button)
         actions.addStretch(1)
         actions.addWidget(self._edit_button)
         layout.addLayout(actions)
@@ -687,6 +691,21 @@ class CommoditiesPage(QWidget):
             asset_id, form.kind, form.trade_date, form.quantity, form.unit_price, form.fees
         )
         self.refresh()
+
+    def _show_history(self) -> None:
+        view = self._selected_view()
+        if view is None:
+            return
+        holding = view.holding
+        points = [(v.valuation_date, v.price) for v in holding.history]
+        QuoteHistoryDialog(
+            self,
+            holding.asset.name,
+            points,
+            self._today(),
+            lambda value: money(value, CURRENCY),
+            column=f"Cours ({CURRENCY}{per_unit(holding.details)})",
+        ).exec()
 
     def _edit(self) -> None:
         view = self._selected_view()

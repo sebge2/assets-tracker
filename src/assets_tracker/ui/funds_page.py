@@ -66,6 +66,7 @@ from assets_tracker.ui.exposure_widgets import (
 )
 from assets_tracker.ui.form_helpers import date_edit, labeled, row, to_date
 from assets_tracker.ui.search_filter import SearchBox, table_with_search
+from assets_tracker.ui.quote_history import QuoteHistoryDialog
 from assets_tracker.ui.quote_import import PriceFetcher, YahooFetchButton, price_text
 from assets_tracker.ui.formatting import (
     MINUS,
@@ -791,7 +792,12 @@ class FundsPage(QWidget):
         trades.addWidget(self._subscribe_button, 1)
         trades.addWidget(self._redeem_button, 1)
         layout.addLayout(trades)
+        self._history_button = QPushButton("Historique des cotations…")
+        self._history_button.clicked.connect(
+            lambda _=False: self._show_history(self._selected_view())
+        )
         layout.addWidget(self._nav_button)
+        layout.addWidget(self._history_button)
 
         operations_caption = QLabel("DERNIÈRES OPÉRATIONS")
         operations_caption.setProperty("role", "caption")
@@ -1143,6 +1149,21 @@ class FundsPage(QWidget):
         except ValueError as error:
             QMessageBox.warning(self, "Opération refusée", str(error))
         self.refresh()
+
+    def _show_history(self, view: FundView | None) -> None:
+        if view is None:
+            return
+        history = self._repository.nav_history(view.asset_id)
+        points = [(v.valuation_date, v.value) for v in history]
+        currency = view.holding.asset.currency
+        QuoteHistoryDialog(
+            self,
+            view.holding.asset.name,
+            points,
+            self._today(),
+            lambda value: money(value, currency),
+            column=f"Valeur liquidative ({currency})",
+        ).exec()
 
     def _update_nav(self, view: FundView | None) -> None:
         if view is None:

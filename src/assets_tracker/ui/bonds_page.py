@@ -74,6 +74,7 @@ from assets_tracker.ui.exposure_widgets import (
     main_label,
 )
 from assets_tracker.ui.form_helpers import date_edit, labeled, row, to_date
+from assets_tracker.ui.quote_history import QuoteHistoryDialog
 from assets_tracker.ui.search_filter import SearchBox, table_with_search
 from assets_tracker.ui.quote_import import PriceFetcher, YahooFetchButton, price_text
 from assets_tracker.ui.formatting import (
@@ -1040,7 +1041,12 @@ class BondsPage(QWidget):
         trades.addWidget(self._buy_button, 1)
         trades.addWidget(self._sell_button, 1)
         layout.addLayout(trades)
+        self._history_button = QPushButton("Historique des cotations…")
+        self._history_button.clicked.connect(
+            lambda _=False: self._show_history(self._selected_view())
+        )
         layout.addWidget(self._quote_button)
+        layout.addWidget(self._history_button)
         self._edit_button = QPushButton("Modifier l'obligation…")
         self._edit_button.clicked.connect(lambda _=False: self._edit_bond(self._selected_view()))
         layout.addWidget(self._edit_button)
@@ -1524,6 +1530,20 @@ class BondsPage(QWidget):
         except ValueError as error:
             QMessageBox.warning(self, "Opération refusée", str(error))
         self.refresh()
+
+    def _show_history(self, view: BondView | None) -> None:
+        if view is None:
+            return
+        history = self._repository.quote_history(view.asset_id)
+        points = [(v.valuation_date, v.value) for v in history]
+        QuoteHistoryDialog(
+            self,
+            view.holding.asset.name,
+            points,
+            self._today(),
+            _pct,
+            column="Cours (% du nominal)",
+        ).exec()
 
     def _update_quote(self, view: BondView | None) -> None:
         if view is None:

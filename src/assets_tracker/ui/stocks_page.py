@@ -86,6 +86,7 @@ from assets_tracker.ui.exposure_widgets import (
     main_label,
 )
 from assets_tracker.ui.form_helpers import date_edit, labeled, row, to_date
+from assets_tracker.ui.quote_history import QuoteHistoryDialog
 from assets_tracker.ui.search_filter import SearchBox, table_with_search
 from assets_tracker.ui.quote_import import PriceFetcher, YahooFetchButton, price_text
 from assets_tracker.ui.formatting import (
@@ -795,6 +796,10 @@ class StocksPage(QWidget):
         self._quote_button.clicked.connect(
             lambda _=False: self._update_quote(self._selected_view())
         )
+        self._history_button = QPushButton("Historique des cotations…")
+        self._history_button.clicked.connect(
+            lambda _=False: self._show_history(self._selected_view())
+        )
         self._edit_button = QPushButton("Modifier l'action…")
         self._edit_button.clicked.connect(lambda _=False: self._edit_stock(self._selected_view()))
         trades = QHBoxLayout()
@@ -803,6 +808,7 @@ class StocksPage(QWidget):
         trades.addWidget(self._sell_button, 1)
         layout.addLayout(trades)
         layout.addWidget(self._quote_button)
+        layout.addWidget(self._history_button)
         layout.addWidget(self._edit_button)
 
         operations_caption = QLabel("DERNIÈRES OPÉRATIONS")
@@ -1310,6 +1316,21 @@ class StocksPage(QWidget):
         except ValueError as error:
             QMessageBox.warning(self, "Opération refusée", str(error))
         self.refresh()
+
+    def _show_history(self, view: StockView | None) -> None:
+        if view is None:
+            return
+        history = self._repository.quote_history(view.asset_id)
+        points = [(v.valuation_date, v.value) for v in history]
+        currency = view.currency
+        QuoteHistoryDialog(
+            self,
+            view.holding.asset.name,
+            points,
+            self._today(),
+            lambda value: money(value, currency),
+            column=f"Cours ({currency})",
+        ).exec()
 
     def _update_quote(self, view: StockView | None) -> None:
         if view is None:
