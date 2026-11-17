@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from PySide6.QtCore import QSize, Qt
+from PySide6.QtCore import QSize, Qt, QTimer
 from PySide6.QtWidgets import (
     QButtonGroup,
     QFrame,
@@ -23,6 +23,7 @@ from assets_tracker.db.fund_repository import FundRepository
 from assets_tracker.db.fx_repository import FxRepository
 from assets_tracker.db.stock_repository import StockRepository
 from assets_tracker.db.term_note_repository import TermNoteRepository
+from assets_tracker.db.valuation_repository import ValuationRepository
 from assets_tracker.domain.models import InstrumentType
 from assets_tracker.market.exposure import fetch_exposure
 from assets_tracker.ui import icons, theme
@@ -34,6 +35,9 @@ from assets_tracker.ui.portfolio_page import PortfolioPage
 from assets_tracker.ui.projection_page import ProjectionPage
 from assets_tracker.ui.stocks_page import StocksPage
 from assets_tracker.ui.term_notes_page import TermNotesPage
+
+
+AUTO_REFRESH_MS = 4 * 60 * 60 * 1000  # actualisation automatique de tous les cours : 4 h
 
 
 class MainWindow(QMainWindow):
@@ -77,6 +81,21 @@ class MainWindow(QMainWindow):
         )
         self.projection_page = ProjectionPage()
         self.portfolio_page.asset_requested.connect(self._open_asset)
+        self._valuations = ValuationRepository(database)
+        self._refresh_pending: set[str] = set()
+        self._refresh_starting = False
+        self.portfolio_page.refresh_requested.connect(self.refresh_all_quotes)
+        self.portfolio_page.set_last_refresh(self._valuations.last_fetched_at())
+        for name, page in (
+            ("stocks", self.stocks_page),
+            ("bonds", self.bonds_page),
+            ("commodities", self.commodities_page),
+        ):
+            page.quotes_refreshed.connect(lambda name=name: self._quotes_refreshed(name))
+        self._auto_refresh = QTimer(self)
+        self._auto_refresh.setInterval(AUTO_REFRESH_MS)
+        self._auto_refresh.timeout.connect(self.refresh_all_quotes)
+        self._auto_refresh.start()
         self._stack.addWidget(self.cash_page)
         self._stack.addWidget(self.commodities_page)
         self._stack.addWidget(self.funds_page)
@@ -93,6 +112,40 @@ class MainWindow(QMainWindow):
         layout.addWidget(self._build_sidebar())
         layout.addWidget(self._stack, 1)
         self.setCentralWidget(root)
+
+    def refresh_all_quotes(self) -> None:
+        """Redemande les cours de toutes les positions (actions, obligations, matières premières).
+
+        Appelé par le bouton du Portefeuille et, toutes les 4 h, par le minuteur. Les appels
+        tournent hors du thread Qt ; le spinner s'arrête quand toutes les pages ont terminé.
+        """
+        if self._refresh_pending or self._refresh_starting:
+            return
+        pages = {
+            "stocks": self.stocks_page.refresh_quotes,
+            "bonds": self.bonds_page.refresh_quotes,
+            "commodities": self.commodities_page.refresh_prices,
+        }
+        self._refresh_pending = set(pages)
+        self._refresh_starting = True
+        self.portfolio_page.set_refreshing(True)
+        for name, refresh in pages.items():
+            if not refresh(force=True):
+                self._refresh_pending.discard(name)
+        self._refresh_starting = False
+        self._finish_refresh_if_done()
+
+    def _quotes_refreshed(self, name: str) -> None:
+        self._refresh_pending.discard(name)
+        if not self._refresh_starting:
+            self._finish_refresh_if_done()
+
+    def _finish_refresh_if_done(self) -> None:
+        if self._refresh_pending:
+            return
+        self.portfolio_page.set_refreshing(False)
+        self.portfolio_page.set_last_refresh(self._valuations.last_fetched_at())
+        self.portfolio_page.refresh()
 
     def _build_sidebar(self) -> QFrame:
         sidebar = QFrame()

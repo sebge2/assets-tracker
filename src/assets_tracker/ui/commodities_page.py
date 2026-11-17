@@ -192,6 +192,8 @@ class CommoditiesPage(QWidget):
     un échec conserve le dernier cours connu, affiché avec sa date et le badge « Cache ».
     """
 
+    quotes_refreshed = Signal()  # fin d'une actualisation des cours
+
     _COLUMNS = ["Matière", "Détention", "PRU", "Cours", "Valeur", "+/− value"]
 
     def __init__(
@@ -723,14 +725,15 @@ class CommoditiesPage(QWidget):
 
     # -- cours --
 
-    def refresh_prices(self, force: bool = False) -> None:
+    def refresh_prices(self, force: bool = False) -> bool:
         """Actualise les cours : une seule fois par jour et par matière, sauf `force`.
 
         Une matière déjà valorisée aujourd'hui n'est pas redemandée au fournisseur ; un échec
         garde le dernier cours connu (badge « Cache ») et sera retenté au prochain passage.
+        Renvoie True si une actualisation est en cours : `quotes_refreshed` sera émis à sa fin.
         """
         if self._refreshing:
-            return
+            return True
         quoted = [
             h
             for h in self._repository.list_holdings()
@@ -745,17 +748,18 @@ class CommoditiesPage(QWidget):
         )
         requests = [(h.asset.id, h.details) for h in quoted if h.asset.id in due and h.asset.id]
         if not requests:
-            return
+            return False
         self._refreshing = True
         self._refresh_button.setEnabled(False)
         self._refresh_button.setText("Actualisation…")
         if not self._background:
             self._finish_refresh(fetch_prices(requests, self._price_fetcher))
-            return
+            return True
         task = _PriceTask(requests, self._price_fetcher)
         task.signals.done.connect(self._finish_refresh)
         self._tasks.append(task)
         QThreadPool.globalInstance().start(task)
+        return True
 
     def _finish_refresh(self, results: object) -> None:
         assert isinstance(results, dict)
@@ -771,6 +775,7 @@ class CommoditiesPage(QWidget):
         self._refresh_button.setEnabled(True)
         self._refresh_button.setText("Actualiser les cours")
         self.refresh()
+        self.quotes_refreshed.emit()
 
     def resizeEvent(self, event: QResizeEvent) -> None:  # noqa: N802 (API Qt)
         super().resizeEvent(event)

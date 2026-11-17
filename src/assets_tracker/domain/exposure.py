@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Sequence
+from collections.abc import Collection, Iterable, Sequence
 from dataclasses import dataclass
 from decimal import Decimal
 from enum import StrEnum
@@ -131,6 +131,21 @@ class ExposedAsset:
     sectors: tuple[ExposureEntry, ...]
     zones: tuple[ExposureEntry, ...]
     asset_id: int | None = None  # None pour les comptes cash et les matières premières
+
+
+AssetKey = tuple[str, int | str]
+
+
+def asset_key(asset: ExposedAsset) -> AssetKey:
+    """Identité stable d'un actif exposé : (type, identifiant) ou (type, nom) sans identifiant."""
+    return asset.instrument.value, asset.asset_id if asset.asset_id is not None else asset.name
+
+
+def filter_assets(
+    assets: Sequence[ExposedAsset], excluded: Collection[AssetKey]
+) -> list[ExposedAsset]:
+    """Actifs retenus dans la répartition : tous sauf ceux que l'utilisateur a exclus."""
+    return [a for a in assets if asset_key(a) not in excluded]
 
 
 @dataclass(frozen=True, slots=True)

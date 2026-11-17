@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from datetime import date
+from datetime import date, datetime
 from decimal import Decimal
 
 from PySide6.QtCore import Qt, Signal
@@ -52,6 +52,7 @@ from assets_tracker.ui.formatting import (
     signed_money,
 )
 from assets_tracker.ui.portfolio_exposure import PortfolioExposureCard
+from assets_tracker.ui.spinner import Spinner
 from assets_tracker.ui.widgets import Card, PageContent
 
 _PERIODS = (("3 mois", 3), ("6 mois", 6), ("12 mois", 12), ("Tout", 0))
@@ -104,6 +105,7 @@ class PortfolioPage(QWidget):
     """Vue d'ensemble, lecture seule : tout est recalculé depuis les comptes et les positions."""
 
     asset_requested = Signal(object, int)  # (InstrumentType, identifiant) : ouvrir sa fiche
+    refresh_requested = Signal()  # l'utilisateur demande d'actualiser tous les cours
 
     def __init__(
         self,
@@ -144,6 +146,26 @@ class PortfolioPage(QWidget):
         header.setSpacing(4)
         header.addWidget(title)
         header.addWidget(self._subtitle)
+
+        self._refresh_button = QPushButton("Actualiser les cours")
+        self._refresh_button.setAccessibleName("Actualiser tous les cours")
+        self._refresh_button.clicked.connect(lambda _=False: self.refresh_requested.emit())
+        self._refresh_spinner = Spinner(16)
+        self._last_refresh = QLabel()
+        self._last_refresh.setProperty("role", "muted")
+        self._last_refresh.setAlignment(Qt.AlignmentFlag.AlignRight)
+        refresh_row = QHBoxLayout()
+        refresh_row.setSpacing(8)
+        refresh_row.addWidget(self._refresh_spinner)
+        refresh_row.addWidget(self._refresh_button)
+        refresh_box = QVBoxLayout()
+        refresh_box.setSpacing(6)
+        refresh_box.addLayout(refresh_row)
+        refresh_box.addWidget(self._last_refresh)
+        top = QHBoxLayout()
+        top.addLayout(header, 1)
+        top.addLayout(refresh_box, 0)
+        self.set_last_refresh(None)
 
         self._value_card = Card("Valeur totale")
         self._gain_card = Card("Plus-value latente")
@@ -224,7 +246,7 @@ class PortfolioPage(QWidget):
         layout = QVBoxLayout(content)
         layout.setContentsMargins(40, 32, 40, 32)
         layout.setSpacing(24)
-        layout.addLayout(header)
+        layout.addLayout(top)
         layout.addLayout(cards)
         layout.addLayout(body)
         layout.addWidget(self._exposure_card)
@@ -240,6 +262,21 @@ class PortfolioPage(QWidget):
         outer.setContentsMargins(0, 0, 0, 0)
         outer.addWidget(scroll)
         self.refresh()
+
+    # -- actualisation des cours --
+
+    def set_refreshing(self, busy: bool) -> None:
+        """Spinner et bouton désactivé pendant l'actualisation de tous les cours."""
+        self._refresh_spinner.set_running(busy)
+        self._refresh_button.setEnabled(not busy)
+        self._refresh_button.setText("Actualisation…" if busy else "Actualiser les cours")
+
+    def set_last_refresh(self, when: datetime | None) -> None:
+        self._last_refresh.setText(
+            "Aucun cours enregistré"
+            if when is None
+            else f"Dernière actualisation : {when:%d/%m/%Y à %H:%M}"
+        )
 
     # -- données --
 

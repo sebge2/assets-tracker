@@ -139,6 +139,12 @@ Les écrans Actions, Obligations, Fonds et Bons de caisse ont un champ « Filtre
 ## Historique des cotations
 Un bouton « Historique des cotations… » (fiche des Actions, Obligations, Fonds ; « Historique… » pour les Matières premières) ouvre `QuoteHistoryDialog` (`ui/quote_history.py`) : courbe (`PositionChart`), tuiles (variation, dernier, plus bas, plus haut, nombre de cotations) et liste des cotations, avec bascule de période 1 mois / 3 mois / 6 mois / 1 an / 5 ans / Tout (défaut). Les cotations viennent de la table `valuations` (`quote_history`, `nav_history`, `holding.history`) ; logique pure dans `domain/history.py` (`PERIODS`, `in_period`, `period_stats`, un cours par jour). Les périodes sont relatives à aujourd'hui ; sans cotation sur la période, un message l'indique.
 
+## Actifs inclus dans la répartition du Portefeuille
+Le bouton « Choisir les actifs… » de la carte « Répartition par secteur et par zone » (`PortfolioExposureCard`) ouvre `ExposureAssetsDialog` (`ui/exposure_assets_dialog.py`) : une case par actif, décochée = exclu ; « Tout inclure / Tout exclure ». Les pourcentages sont recalculés sur les actifs restants (`domain.exposure.filter_assets`, identité `asset_key` : (type, identifiant) ou (type, nom) pour les blocs sans identifiant comme les matières premières). Le bouton affiche « Actifs : n/m… » quand des actifs sont exclus. L'exclusion vit dans la carte, **le temps de la session** (non persistée) ; elle n'affecte ni les totaux ni le reste de l'écran.
+
+## Actualisation de tous les cours (écran Portefeuille)
+Le bouton « Actualiser les cours » du Portefeuille demande à `MainWindow.refresh_all_quotes` de relancer **de force** les cours des Actions, Obligations et Matières premières (`refresh_quotes` / `refresh_prices` renvoient `True` si une actualisation est en cours, et leur signal `quotes_refreshed` annonce la fin). Spinner et bouton désactivé jusqu'à la fin de toutes les pages, puis le Portefeuille est recalculé. La même actualisation tourne automatiquement **toutes les 4 h** (`AUTO_REFRESH_MS`, `QTimer` de la fenêtre principale). « Dernière actualisation » = `ValuationRepository.last_fetched_at()` (dernier cours enregistré, saisies manuelles comprises) ; les échecs réseau ne la font donc pas avancer. Les fonds n'ont pas de récupération automatique de VL.
+
 ## Libellé de source cliquable
 Dans la fiche détail (Actions, Obligations, Fonds), le badge « Cours/VL Yahoo · date » est un lien
 vers `https://finance.yahoo.com/quote/<symbole>` (`source_badge_html` / `yahoo_quote_url` dans

@@ -10,6 +10,7 @@ from PySide6.QtCore import QRectF, Qt, Signal
 from PySide6.QtGui import QBrush, QColor, QPainter, QPaintEvent
 from PySide6.QtWidgets import (
     QButtonGroup,
+    QDialog,
     QFrame,
     QHBoxLayout,
     QLabel,
@@ -21,15 +22,19 @@ from PySide6.QtWidgets import (
 from assets_tracker.domain.exposure import (
     NOT_APPLICABLE,
     UNCLASSIFIED,
+    AssetKey,
     Category,
     Contribution,
     ExposedAsset,
     ExposureKind,
     ExposureReport,
+    asset_key,
     exposure_report,
+    filter_assets,
 )
 from assets_tracker.domain.models import InstrumentType
 from assets_tracker.ui import theme
+from assets_tracker.ui.exposure_assets_dialog import ExposureAssetsDialog
 from assets_tracker.ui.formatting import (
     ASSET_LABELS,
     NBSP,
@@ -169,6 +174,7 @@ class PortfolioExposureCard(QFrame):
         super().__init__(parent)
         self.setProperty("role", "card")
         self._assets: list[ExposedAsset] = []
+        self._excluded: set[AssetKey] = set()  # actifs exclus (le temps de la session)
         self._kind = ExposureKind.SECTOR
         self._scope: InstrumentType | None = None
         self._selected: str | None = None
@@ -199,6 +205,10 @@ class PortfolioExposureCard(QFrame):
         for chips in (self._view_chips, self._scope_chips):
             controls.addLayout(chips[0])
         controls.addStretch(1)
+        self._assets_button = QPushButton("Choisir les actifs…")
+        self._assets_button.setAccessibleName("Choisir les actifs repris dans la répartition")
+        self._assets_button.clicked.connect(lambda _=False: self.choose_assets())
+        controls.addWidget(self._assets_button)
 
         self._coverage_text = QLabel()
         self._coverage_bar = StackedBar(6)
@@ -308,6 +318,20 @@ class PortfolioExposureCard(QFrame):
         self._assets = list(assets)
         self._render()
 
+    def excluded(self) -> set[AssetKey]:
+        return set(self._excluded)
+
+    def set_excluded(self, excluded: set[AssetKey]) -> None:
+        self._excluded = set(excluded)
+        self._selected = None
+        self._render()
+
+    def choose_assets(self) -> None:
+        """Ouvre le choix des actifs repris dans la répartition."""
+        dialog = ExposureAssetsDialog(self, self._assets, self._excluded)
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            self.set_excluded(dialog.excluded())
+
     def _set_kind(self, kind: ExposureKind) -> None:
         self._kind, self._selected = kind, None
         self._render()
@@ -323,13 +347,31 @@ class PortfolioExposureCard(QFrame):
     # -- affichage --
 
     def _render(self) -> None:
-        report = exposure_report(self._assets, self._kind, self._scope)
+        present_keys = {asset_key(a) for a in self._assets}
+        excluded = self._excluded & present_keys
+        if excluded:
+            self._assets_button.setText(
+                f"Actifs : {len(self._assets) - len(excluded)}/{len(self._assets)}…"
+            )
+            self._assets_button.setProperty("variant", "primary")
+        else:
+            self._assets_button.setText("Choisir les actifs…")
+            self._assets_button.setProperty("variant", "")
+        self._assets_button.style().unpolish(self._assets_button)
+        self._assets_button.style().polish(self._assets_button)
+        self._assets_button.setEnabled(bool(self._assets))
+        report = exposure_report(filter_assets(self._assets, excluded), self._kind, self._scope)
         self._report = report
         categories = report.categories
         names = [c.name for c in categories]
         if self._selected not in names:
             self._selected = names[0] if names else None
         present = bool(categories)
+        self._empty.setText(
+            "Tous les actifs sont exclus de la répartition."
+            if self._assets and len(excluded) == len(self._assets)
+            else "Rien à répartir pour ce périmètre."
+        )
         self._empty.setVisible(not present)
         self._coverage.setVisible(present)
         self._detail.setVisible(present)

@@ -53,6 +53,11 @@ class ValuationRepository:
         ).fetchone()
         return None if row is None else _valuation(row)
 
+    def last_fetched_at(self) -> datetime | None:
+        """Instant du dernier cours enregistré (tous actifs), None si aucun."""
+        row = self._conn.execute("SELECT MAX(fetched_at) FROM valuations").fetchone()
+        return None if row is None or row[0] is None else datetime.fromisoformat(row[0])
+
     def on_day(self, asset_type: InstrumentType, asset_id: int, day: date) -> Valuation | None:
         row = self._conn.execute(
             "SELECT * FROM valuations WHERE asset_type = ? AND asset_id = ? AND valuation_date = ?",

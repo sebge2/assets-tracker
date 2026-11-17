@@ -791,6 +791,8 @@ class BondsPage(QWidget):
 
     _COLUMNS = ["Obligation", "Coupon · échéance", "Cours (% nominal)", "Valeur", "+/− latente"]
 
+    quotes_refreshed = Signal()  # fin d'une actualisation des cours
+
     def __init__(
         self,
         repository: BondRepository,
@@ -1384,13 +1386,15 @@ class BondsPage(QWidget):
 
     # -- cours Yahoo --
 
-    def refresh_quotes(self, force: bool = False) -> None:
+    def refresh_quotes(self, force: bool = False) -> bool:
         """Demande à Yahoo le cours des positions ouvertes, une fois par jour et par obligation.
 
         Un échec garde le dernier cours connu : l'alerte demande alors une saisie manuelle.
+        Renvoie True si une actualisation est en cours (lancée ici ou déjà là) : `quotes_refreshed`
+        sera alors émis à sa fin.
         """
         if self._refreshing:
-            return
+            return True
         open_bonds = [
             h
             for h in self._repository.list_holdings()
@@ -1419,7 +1423,7 @@ class BondsPage(QWidget):
             if h.asset.id is not None and h.asset.id in due
         ]
         if not requests and not currencies:
-            return
+            return False
         self._refreshing = True
         self._attempted.update(asset_id for asset_id, _ in requests)
         self._attempted_rates.update(currencies)
@@ -1430,11 +1434,12 @@ class BondsPage(QWidget):
                     fetch_rates(currencies, self._rate_fetcher),
                 )
             )
-            return
+            return True
         task = _QuoteTask(requests, self._quote_fetcher, currencies, self._rate_fetcher)
         task.signals.done.connect(self._finish_refresh)
         self._tasks.append(task)
         QThreadPool.globalInstance().start(task)
+        return True
 
     def _finish_refresh(self, results: object) -> None:
         assert isinstance(results, tuple)
@@ -1462,6 +1467,7 @@ class BondsPage(QWidget):
         self._refreshing = False
         self._tasks.clear()
         self.refresh()
+        self.quotes_refreshed.emit()
 
     # -- interactions --
 
