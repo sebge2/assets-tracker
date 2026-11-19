@@ -76,6 +76,8 @@ def _migrate(conn: Any) -> None:
         _migrate_to_2(conn)
     if version < 3:
         _migrate_to_3(conn)
+    if version < 4:
+        _migrate_to_4(conn)
 
 
 def _migrate_to_1(conn: Any) -> None:
@@ -128,3 +130,8 @@ def _migrate_to_3(conn: Any) -> None:
         with conn:
             conn.execute("ALTER TABLE term_note_details ADD COLUMN isin TEXT")
     conn.execute("PRAGMA user_version = 3")
+
+
+def _migrate_to_4(conn: Any) -> None:
+    """Assurances & pensions : les tables `insurance_*` viennent de `schema.sql` (rien à copier)."""
+    conn.execute("PRAGMA user_version = 4")

@@ -175,3 +175,35 @@ CREATE TABLE IF NOT EXISTS term_note_details (
     repaid_capital   TEXT,
     repaid_interest  TEXT
 );
+
+-- Assurances & pensions (épargne-pension, assurance groupe) : hors portefeuille, pas de cours.
+-- La valeur est celle du dernier relevé ; chaque relevé garde la valeur projetée à la retraite,
+-- d'où l'historique des projections (`domain/insurance.py`).
+CREATE TABLE IF NOT EXISTS insurance_contracts (
+    id              INTEGER PRIMARY KEY,
+    kind            TEXT NOT NULL CHECK (kind IN ('PENSION_SAVINGS', 'GROUP_INSURANCE')),
+    name            TEXT NOT NULL,
+    insurer         TEXT NOT NULL,
+    contract_number TEXT,
+    opened_on       TEXT NOT NULL,            -- ISO 8601
+    retirement_on   TEXT,
+    ceiling         TEXT                      -- plafond annuel (épargne-pension), Decimal en euros
+);
+
+CREATE TABLE IF NOT EXISTS insurance_payments (
+    id          INTEGER PRIMARY KEY,
+    contract_id INTEGER NOT NULL REFERENCES insurance_contracts(id) ON DELETE CASCADE,
+    paid_on     TEXT NOT NULL,
+    amount      TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_insurance_payments_contract
+    ON insurance_payments(contract_id, paid_on);
+
+CREATE TABLE IF NOT EXISTS insurance_statements (
+    id              INTEGER PRIMARY KEY,
+    contract_id     INTEGER NOT NULL REFERENCES insurance_contracts(id) ON DELETE CASCADE,
+    recorded_on     TEXT NOT NULL,
+    current_value   TEXT NOT NULL,
+    projected_value TEXT,                     -- NULL si le relevé ne donne pas de projection
+    UNIQUE (contract_id, recorded_on)
+);
