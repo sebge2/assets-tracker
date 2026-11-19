@@ -106,10 +106,11 @@ def test_main_window_navigates_to_the_projection_page(qtbot: QtBot, conn: Any) -
         "Bons de caisse",
         "Assurances et pensions",
         "Actions",
+        "Analyses",
         "Simulation",
     ]
 
-    qtbot.mouseClick(window._nav_buttons[8], Qt.MouseButton.LeftButton)
+    qtbot.mouseClick(window._nav_buttons[9], Qt.MouseButton.LeftButton)
 
     assert window._stack.currentWidget() is window.projection_page
-    assert window._nav_buttons[8].isChecked()
+    assert window._nav_buttons[9].isChecked()

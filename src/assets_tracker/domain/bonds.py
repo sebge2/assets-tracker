@@ -24,6 +24,7 @@ from assets_tracker.domain.funds import (
     nav_series,
 )
 from assets_tracker.domain.models import Position, Transaction, TransactionType
+from assets_tracker.domain.positions import compute_position
 
 ZERO = Decimal(0)
 HUNDRED = Decimal(100)
@@ -31,6 +32,7 @@ CENT = Decimal("0.01")
 STALE_QUOTE_DAYS = STALE_NAV_DAYS  # au-delà, un cours est signalé comme à mettre à jour
 
 __all__ = [
+    "coupon_payments",
     "STALE_QUOTE_DAYS",
     "BondDetails",
     "BondQuote",
@@ -123,6 +125,31 @@ def coupon_dates_around(details: BondDetails, on: date) -> tuple[date, date] | N
             return previous, following
         following = previous
         k += 1
+
+
+def coupon_payments(
+    details: BondDetails, transactions: Iterable[Transaction], today: date
+) -> list[tuple[date, Decimal]]:
+    """Coupons encaissés : un par date de coupon passée, pour les titres alors détenus.
+
+    Les coupons n'entrent pas dans la valeur du titre (cours × quantité) : ce sont des revenus
+    versés hors du portefeuille.
+    """
+    trades = sorted(transactions, key=lambda t: t.trade_date)
+    if not trades:
+        return []
+    step = details.frequency.months
+    payments: list[tuple[date, Decimal]] = []
+    k = 0
+    while (when := _add_months(details.maturity, -k * step)) >= trades[0].trade_date:
+        if when <= today:
+            held = [t for t in trades if t.trade_date <= when]
+            quantity = compute_position(trades[0].asset_id, held).quantity
+            if quantity > ZERO and when > trades[0].trade_date:
+                amount = annual_coupon(details, quantity) / details.frequency.per_year
+                payments.append((when, amount.quantize(CENT, rounding=ROUND_HALF_UP)))
+        k += 1
+    return sorted(payments)
 
 
 def annual_coupon(details: BondDetails, quantity: Decimal) -> Decimal:

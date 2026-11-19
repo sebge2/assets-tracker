@@ -32,6 +32,7 @@ from assets_tracker.ui.bonds_page import BondsPage
 from assets_tracker.ui.cash_page import CashPage
 from assets_tracker.ui.commodities_page import CommoditiesPage
 from assets_tracker.ui.funds_page import FundsPage
+from assets_tracker.ui.analytics_page import AnalyticsPage
 from assets_tracker.ui.insurance_page import InsurancePage
 from assets_tracker.ui.portfolio_page import PortfolioPage
 from assets_tracker.ui.projection_page import ProjectionPage
@@ -82,6 +83,7 @@ class MainWindow(QMainWindow):
             exposure=exposure_repository,
             exposure_fetcher=fetch_exposure,
         )
+        self.analytics_page = AnalyticsPage(self.portfolio_page.load)  # hors assurances
         self.projection_page = ProjectionPage()
         self.portfolio_page.asset_requested.connect(self._open_asset)
         self._valuations = ValuationRepository(database)
@@ -106,6 +108,7 @@ class MainWindow(QMainWindow):
         self._stack.addWidget(self.term_notes_page)
         self._stack.addWidget(self.insurance_page)
         self._stack.addWidget(self.stocks_page)
+        self._stack.addWidget(self.analytics_page)
         self._stack.addWidget(self.projection_page)
 
         root = QWidget()
@@ -185,6 +188,7 @@ class MainWindow(QMainWindow):
                 ("Bons de caisse", "term_note"),
                 ("Assurances et pensions", "insurance"),
                 ("Actions", "stock"),
+                ("Analyses", "analytics"),
                 ("Simulation", "simulation"),
             )
         ):
@@ -237,3 +241,5 @@ class MainWindow(QMainWindow):
         elif index == 7:
             self.stocks_page.refresh()
             self.stocks_page.refresh_quotes()
+        elif index == 8:
+            self.analytics_page.refresh()

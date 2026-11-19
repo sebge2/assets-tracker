@@ -8,7 +8,7 @@ nouveau type d'actif ajoute une entrée `PortfolioInput` sans changer le reste.
 from __future__ import annotations
 
 from collections.abc import Iterable, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import date
 from decimal import Decimal
 
@@ -41,6 +41,12 @@ class PricedSource:
     asset_type: InstrumentType
     transactions: list[Transaction]
     prices: list[tuple[date, Decimal]]  # (jour, cours), de la plus ancienne à la plus récente
+    name: str = ""  # libellé affiché dans les analyses
+    # Revenus versés hors du portefeuille (coupons, intérêts de bons de caisse) : ils comptent
+    # dans le gain sans entrer dans la valeur.
+    distributions: list[tuple[date, Decimal]] = field(default_factory=list)
+    # Tous les revenus perçus (affichage de l'onglet Revenus).
+    income: list[tuple[date, Decimal]] = field(default_factory=list)
 
 
 @dataclass(frozen=True, slots=True)

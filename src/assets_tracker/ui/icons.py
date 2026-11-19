@@ -20,6 +20,7 @@ _PATHS = {
     '<circle cx="15.5" cy="16.5" r="2.5"/><path d="M15.5 15.5v1.2l.8.5"/>',
     "insurance": '<path d="M12 3l8 3v6c0 4.5-3.2 7.8-8 9-4.8-1.2-8-4.5-8-9V6z"/>'
     '<path d="M9 12l2.2 2.2L15.5 10"/>',
+    "analytics": '<path d="M4 20V11M10 20V4M16 20v-7M22 20H2"/>',
     "stock": '<path d="M3 17l6-6 4 4 8-8"/><path d="M15 7h6v6"/>',
     "edit": '<path d="M4 20h4L19 9l-4-4L4 16zM13.5 6.5l4 4"/>',
     "delete": '<path d="M4 7h16M10 11v5M14 11v5M9 7l1-3h4l1 3M6 7l1 13h10l1-13"/>',

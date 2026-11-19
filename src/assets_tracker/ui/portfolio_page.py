@@ -28,6 +28,7 @@ from assets_tracker.db.fund_repository import FundRepository
 from assets_tracker.db.fx_repository import FxRepository
 from assets_tracker.db.stock_repository import StockRepository
 from assets_tracker.db.term_note_repository import TermNoteRepository
+from assets_tracker.domain.bonds import coupon_payments
 from assets_tracker.domain.exposure import ExposedAsset, ExposureKind
 from assets_tracker.domain.fx import rate_for, transactions_in_euros
 from assets_tracker.domain.models import InstrumentType
@@ -41,7 +42,12 @@ from assets_tracker.domain.portfolio import (
     change,
     window,
 )
-from assets_tracker.domain.term_notes import note_value, portfolio_prices, portfolio_transactions
+from assets_tracker.domain.term_notes import (
+    interest_income,
+    note_value,
+    portfolio_prices,
+    portfolio_transactions,
+)
 from assets_tracker.ui import theme
 from assets_tracker.ui.allocation_donut import AllocationDonut, DonutSlice
 from assets_tracker.ui.evolution_chart import EvolutionChart
@@ -308,6 +314,7 @@ class PortfolioPage(QWidget):
                 InstrumentType.COMMODITY,
                 holding.transactions,
                 [(record.valuation_date, record.price) for record in holding.history],
+                holding.asset.name,
             )
             for holding in self._commodities.list_holdings()
         ]
@@ -327,7 +334,10 @@ class PortfolioPage(QWidget):
             ]
             priced.append(
                 PricedSource(
-                    InstrumentType.FUND, transactions_in_euros(holding.transactions, rate), history
+                    InstrumentType.FUND,
+                    transactions_in_euros(holding.transactions, rate),
+                    history,
+                    holding.asset.name,
                 )
             )
         bonds = self._bonds.list_holdings()
@@ -343,9 +353,19 @@ class PortfolioPage(QWidget):
             history = [
                 (v.valuation_date, v.value * rate) for v in self._bonds.quote_history(asset_id)
             ]
+            # Les coupons ne sont pas dans la valeur d'un titre : revenus versés hors portefeuille.
+            coupons = [
+                (day, amount * rate)
+                for day, amount in coupon_payments(bond.details, bond.transactions, self._today())
+            ]
             priced.append(
                 PricedSource(
-                    InstrumentType.BOND, transactions_in_euros(bond.transactions, rate), history
+                    InstrumentType.BOND,
+                    transactions_in_euros(bond.transactions, rate),
+                    history,
+                    bond.asset.name,
+                    coupons,
+                    coupons,
                 )
             )
         stocks = self._stocks.list_holdings()
@@ -362,7 +382,10 @@ class PortfolioPage(QWidget):
             ]
             priced.append(
                 PricedSource(
-                    InstrumentType.STOCK, transactions_in_euros(stock.transactions, rate), history
+                    InstrumentType.STOCK,
+                    transactions_in_euros(stock.transactions, rate),
+                    history,
+                    stock.asset.name,
                 )
             )
         today = self._today()
@@ -373,11 +396,15 @@ class PortfolioPage(QWidget):
                     continue
                 # Un bon est une position d'un titre : capital à la souscription, valeur (capital
                 # + intérêts courus) en fin de mois, remboursement = vente.
+                paid, income = interest_income(note.details, note.repayment, today)
                 priced.append(
                     PricedSource(
                         InstrumentType.TERM_NOTE,
                         portfolio_transactions(asset_id, note.details, note.repayment),
                         portfolio_prices(note.details, today, note.repayment),
+                        note.asset.name,
+                        paid,
+                        income,
                     )
                 )
         return PortfolioInput(cash, priced)

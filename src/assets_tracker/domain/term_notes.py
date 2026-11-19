@@ -32,6 +32,7 @@ __all__ = [
     "Repayment",
     "TermNoteDetails",
     "accrued_interest",
+    "interest_income",
     "interest_paid",
     "interest_payments",
     "interest_total",
@@ -171,6 +172,22 @@ def interest_paid(details: TermNoteDetails, on: date) -> Decimal:
 def interest_payments(details: TermNoteDetails) -> list[tuple[date, Decimal]]:
     """Versements d'intérêts avant l'échéance (le dernier se fait au remboursement)."""
     return [(finish, i) for _, finish, i in _periods(details) if finish < details.end]
+
+
+def interest_income(
+    details: TermNoteDetails, repayment: Repayment | None, today: date
+) -> tuple[list[tuple[date, Decimal]], list[tuple[date, Decimal]]]:
+    """(versements hors valeur, tous les revenus perçus) d'un bon, jusqu'à `today`.
+
+    Les versements annuels sortent de la valeur du bon ; l'intérêt de la dernière période est
+    payé au remboursement, il est déjà dans le prix de vente.
+    """
+    stop = repayment.paid_on if repayment else details.end
+    paid = [(d, i) for d, i in interest_payments(details) if d <= today and d < stop]
+    income = list(paid)
+    if repayment is not None and repayment.interest > ZERO and repayment.paid_on <= today:
+        income.append((repayment.paid_on, repayment.interest))
+    return paid, income
 
 
 def accrued_interest(details: TermNoteDetails, on: date) -> Decimal:
