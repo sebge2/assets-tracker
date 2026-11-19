@@ -184,7 +184,7 @@ class MainWindow(QMainWindow):
                 ("Fonds", "fund"),
                 ("Obligations", "bond"),
                 ("Bons de caisse", "term_note"),
-                ("Assurances & pensions", "insurance"),
+                ("Assurances et pensions", "insurance"),
                 ("Actions", "stock"),
                 ("Simulation", "simulation"),
             )

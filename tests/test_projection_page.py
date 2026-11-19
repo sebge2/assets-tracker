@@ -104,7 +104,7 @@ def test_main_window_navigates_to_the_projection_page(qtbot: QtBot, conn: Any) -
         "Fonds",
         "Obligations",
         "Bons de caisse",
-        "Assurances & pensions",
+        "Assurances et pensions",
         "Actions",
         "Simulation",
     ]

@@ -537,7 +537,7 @@ class InsurancePage(QWidget):
         self._selected: int | None = None
         self._views: list[ContractView] = []
 
-        title = QLabel("Assurances & pensions")
+        title = QLabel("Assurances et pensions")
         title.setProperty("role", "title")
         self._subtitle = QLabel()
         self._subtitle.setProperty("role", "subtitle")
