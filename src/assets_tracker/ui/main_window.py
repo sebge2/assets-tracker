@@ -21,8 +21,8 @@ from assets_tracker.db.commodity_repository import CommodityRepository
 from assets_tracker.db.exposure_repository import ExposureRepository
 from assets_tracker.db.fund_repository import FundRepository
 from assets_tracker.db.fx_repository import FxRepository
-from assets_tracker.db.stock_repository import StockRepository
 from assets_tracker.db.insurance_repository import InsuranceRepository
+from assets_tracker.db.stock_repository import StockRepository
 from assets_tracker.db.term_note_repository import TermNoteRepository
 from assets_tracker.db.valuation_repository import ValuationRepository
 from assets_tracker.domain.models import InstrumentType
@@ -32,12 +32,11 @@ from assets_tracker.ui.bonds_page import BondsPage
 from assets_tracker.ui.cash_page import CashPage
 from assets_tracker.ui.commodities_page import CommoditiesPage
 from assets_tracker.ui.funds_page import FundsPage
+from assets_tracker.ui.insurance_page import InsurancePage
 from assets_tracker.ui.portfolio_page import PortfolioPage
 from assets_tracker.ui.projection_page import ProjectionPage
 from assets_tracker.ui.stocks_page import StocksPage
-from assets_tracker.ui.insurance_page import InsurancePage
 from assets_tracker.ui.term_notes_page import TermNotesPage
-
 
 AUTO_REFRESH_MS = 4 * 60 * 60 * 1000  # actualisation automatique de tous les cours : 4 h
 
