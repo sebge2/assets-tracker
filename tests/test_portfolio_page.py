@@ -346,3 +346,31 @@ def test_cash_is_left_out_of_the_sector_and_zone_breakdown(qtbot: QtBot, conn: A
     exposed = page._exposed_assets(page._portfolio)
     assert InstrumentType.CASH not in [asset.instrument for asset in exposed]
     assert [asset.name for asset in exposed] == ["Matières premières"]
+
+
+def test_unchecking_a_type_recomputes_the_allocation(qtbot: QtBot, conn: Any) -> None:
+    fill(conn)  # 7 200 € de matières premières + 1 000 € de liquidités
+    page = make_page(qtbot, conn)
+    assert page._donut._total == D(8200)
+    assert len(page._rows) == 2
+
+    page._rows[0].check.setChecked(False)  # matières premières
+
+    assert page.excluded_types() == {InstrumentType.COMMODITY}
+    assert page._donut._total == D(1000)
+    assert page._donut.accessibleDescription().endswith("100,0 %")
+    assert len(page._rows) == 2  # la ligne décochée reste visible pour pouvoir la recocher
+    assert not page._rows[0].check.isChecked()
+
+    page._rows[0].check.setChecked(True)
+    assert page.excluded_types() == set()
+    assert page._donut._total == D(8200)
+
+
+def test_the_last_type_cannot_be_unchecked(qtbot: QtBot, conn: Any) -> None:
+    fill(conn)
+    page = make_page(qtbot, conn)
+    page._rows[0].check.setChecked(False)
+    page._rows[1].check.setChecked(False)
+    assert page.excluded_types() == set()
+    assert page._donut._total == D(8200)

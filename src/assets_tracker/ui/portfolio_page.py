@@ -10,6 +10,7 @@ from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QFocusEvent
 from PySide6.QtWidgets import (
     QButtonGroup,
+    QCheckBox,
     QFrame,
     QHBoxLayout,
     QLabel,
@@ -64,24 +65,39 @@ def _signed_percent(value: Decimal) -> str:
 
 
 class _LegendRow(QFrame):
-    """Une ligne de légende : le survol ou le focus clavier met la part en avant."""
+    """Une ligne de légende : le survol ou le focus clavier met la part en avant.
+
+    La case à cocher inclut ou exclut le type d'actif de la répartition ; une ligne exclue
+    reste visible (grisée, sans pourcentage) pour pouvoir la recocher.
+    """
 
     entered = Signal()
     left = Signal()
+    toggled = Signal(bool)  # case cochée : le type est inclus
 
-    def __init__(self, item: DonutSlice) -> None:
+    def __init__(self, item: DonutSlice, *, included: bool = True) -> None:
         super().__init__()
         self.setFocusPolicy(Qt.FocusPolicy.TabFocus)
-        self.setAccessibleName(f"{item.label} : {format_number(item.percent, 1)} %")
+        share_text = f"{format_number(item.percent, 1)} %" if included else "—"
+        self.setAccessibleName(f"{item.label} : {share_text}")
+        self.check = QCheckBox()
+        self.check.setChecked(included)
+        self.check.setAccessibleName(f"Inclure {item.label} dans la répartition")
+        self.check.toggled.connect(self.toggled)
         dot = QLabel("●")
-        dot.setStyleSheet(f"color: {item.color};")
         name = QLabel(item.label)
-        share = QLabel(f"{format_number(item.percent, 1)} %")
+        share = QLabel(share_text)
         share.setFont(theme.mono_font(13))
         share.setProperty("role", "muted")
+        if included:
+            dot.setStyleSheet(f"color: {item.color};")
+        else:
+            for label in (dot, name, share):
+                label.setStyleSheet(f"color: {theme.TEXT_SUBTLE};")
         row = QHBoxLayout(self)
         row.setContentsMargins(4, 4, 4, 4)
         row.setSpacing(10)
+        row.addWidget(self.check)
         row.addWidget(dot)
         row.addWidget(name, 1)
         row.addWidget(share)
@@ -137,6 +153,7 @@ class PortfolioPage(QWidget):
         self._period = 12
         self._portfolio: Portfolio | None = None
         self._rows: list[_LegendRow] = []
+        self._excluded_types: set[InstrumentType] = set()  # décochés dans la légende (session)
 
         title = QLabel("Portefeuille")
         title.setProperty("role", "title")
@@ -484,24 +501,45 @@ class PortfolioPage(QWidget):
     # -- répartition --
 
     def _fill_allocation(self, portfolio: Portfolio) -> None:
-        slices = [
-            DonutSlice(
+        """Anneau et légende : les types décochés sortent de l'anneau, les parts sont recalculées."""
+        kept = [s for s in portfolio.slices if s.asset_type not in self._excluded_types]
+        if not kept:  # au moins un type reste inclus
+            self._excluded_types.clear()
+            kept = list(portfolio.slices)
+        total = sum((s.value for s in kept), Decimal(0))
+        shown = {
+            s.asset_type: DonutSlice(
                 ASSET_LABELS[s.asset_type],
                 theme.ASSET_COLORS[s.asset_type.value],
                 s.value,
-                s.percent,
+                s.value / total * Decimal(100),
             )
-            for s in portfolio.slices
-        ]
-        self._donut.set_slices(slices, portfolio.summary.total)
+            for s in kept
+        }
+        slices = list(shown.values())
+        self._donut.set_slices(slices, total)
         for row in self._rows:
             self._legend.removeWidget(row)
             row.deleteLater()
         self._rows = []
-        for index, item in enumerate(slices):
-            row = _LegendRow(item)
-            row.entered.connect(lambda i=index: self._donut.set_highlight(i))
-            row.left.connect(lambda: self._donut.set_highlight(-1))
+        for part in portfolio.slices:
+            kind = part.asset_type
+            item = shown.get(kind)
+            row = _LegendRow(
+                item
+                or DonutSlice(
+                    ASSET_LABELS[kind],
+                    theme.ASSET_COLORS[kind.value],
+                    part.value,
+                    Decimal(0),
+                ),
+                included=item is not None,
+            )
+            if item is not None:
+                index = slices.index(item)
+                row.entered.connect(lambda i=index: self._donut.set_highlight(i))
+                row.left.connect(lambda: self._donut.set_highlight(-1))
+            row.toggled.connect(lambda checked, k=kind: self._set_type_included(k, checked))
             self._legend.addWidget(row)
             self._rows.append(row)
         notes = []
@@ -520,8 +558,22 @@ class PortfolioPage(QWidget):
         self._note.setText(" ".join(notes))
         self._note.setVisible(bool(notes))
 
+    def _set_type_included(self, kind: InstrumentType, included: bool) -> None:
+        """Coche ou décoche un type d'actif de la répartition (le dernier ne peut pas l'être)."""
+        if included:
+            self._excluded_types.discard(kind)
+        else:
+            self._excluded_types.add(kind)
+        if self._portfolio is not None:
+            self._fill_allocation(self._portfolio)
+
+    def excluded_types(self) -> set[InstrumentType]:
+        """Types décochés dans la répartition, pour les tests."""
+        return set(self._excluded_types)
+
     def _on_donut_highlight(self, index: int) -> None:
-        for position, row in enumerate(self._rows):
-            row.setStyleSheet(
-                f"background: {theme.HOVER_ROW}; border-radius: 6px;" if position == index else ""
-            )
+        included = [row for row in self._rows if row.check.isChecked()]
+        for row in self._rows:
+            row.setStyleSheet("")
+        if 0 <= index < len(included):
+            included[index].setStyleSheet(f"background: {theme.HOVER_ROW}; border-radius: 6px;")
