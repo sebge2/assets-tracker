@@ -60,6 +60,11 @@ def in_period(points: Iterable[Point], today: date, days: int | None) -> list[Po
     return [p for p in ordered if start <= p[0] <= today]
 
 
+def in_range(points: Iterable[Point], start: date, end: date) -> list[Point]:
+    """Cours entre `start` et `end` inclus (vide si `start` est après `end`)."""
+    return [p for p in daily_points(points) if start <= p[0] <= end]
+
+
 def period_stats(points: Iterable[Point]) -> PeriodStats | None:
     """Premier, dernier, plus bas et plus haut cours ; None s'il n'y a aucun cours."""
     ordered = daily_points(points)

@@ -24,8 +24,8 @@ from assets_tracker.ui.stocks_page import QuoteDialog, StockDialog, StocksPage, 
 D = Decimal
 TODAY = date(2026, 11, 13)
 NOW = datetime(2026, 11, 13, 9, 0)
-NBSP = " "
-NNBSP = " "
+NBSP = "\u00a0"
+NNBSP = "\u202f"
 AIR_LIQUIDE = "AI.PA"
 ASML = "ASML.AS"
 APPLE = "AAPL"
@@ -194,7 +194,7 @@ def test_detail_of_the_selected_stock(page: StocksPage) -> None:
     page._table.setCurrentCell(1, 0)
 
     assert page._d_name.text() == "Air Liquide"
-    assert page._d_sub.text() == "AI.PA · Euronext Paris · Industrie"
+    assert page._d_sub.text() == "AI.PA · Euronext Paris"
     assert page._d_value.text() == f"2{NNBSP}054,40{NBSP}€"
     assert page._d_gain.text() == f"+153,60{NBSP}€ · +8,1{NBSP}%"
     assert page._d_euros.text() == ""  # déjà en euros

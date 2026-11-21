@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import unicodedata
 from dataclasses import dataclass
 from datetime import date
 from decimal import Decimal
@@ -26,14 +27,20 @@ class ContractHolding:
     statements: tuple[Statement, ...]  # du plus ancien au plus récent
 
 
+def _sort_key(name: str) -> str:
+    decomposed = unicodedata.normalize("NFKD", name)
+    return "".join(c for c in decomposed if not unicodedata.combining(c)).casefold()
+
+
 class InsuranceRepository:
     def __init__(self, conn: Any) -> None:
         self._conn = conn
 
     def list_contracts(self) -> list[ContractHolding]:
-        rows = self._conn.execute(
-            "SELECT * FROM insurance_contracts ORDER BY name COLLATE NOCASE, id"
-        ).fetchall()
+        rows = self._conn.execute("SELECT * FROM insurance_contracts ORDER BY id").fetchall()
+        # Tri sans casse ni accents en Python : COLLATE NOCASE de SQLite ne replie que l'ASCII,
+        # « Épargne » passerait après « Pension ».
+        rows = sorted(rows, key=lambda row: (_sort_key(row["name"]), row["id"]))
         return [self._holding(row) for row in rows]
 
     def get(self, contract_id: int) -> ContractHolding | None:

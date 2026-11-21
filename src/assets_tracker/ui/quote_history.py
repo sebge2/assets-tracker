@@ -6,6 +6,7 @@ from collections.abc import Callable, Sequence
 from datetime import date
 from decimal import Decimal
 
+from PySide6.QtCore import QDate
 from PySide6.QtWidgets import (
     QButtonGroup,
     QDialog,
@@ -19,13 +20,22 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from assets_tracker.domain.history import PERIODS, Point, daily_points, in_period, period_stats
+from assets_tracker.domain.history import (
+    PERIODS,
+    Point,
+    daily_points,
+    in_period,
+    in_range,
+    period_stats,
+)
 from assets_tracker.ui import theme
 from assets_tracker.ui.commodity_chart import PositionChart
+from assets_tracker.ui.form_helpers import date_edit, to_date
 from assets_tracker.ui.formatting import format_number
 from assets_tracker.ui.widgets import RIGHT, fit_height, prepare_table, table_cell
 
 TABLE_MAX_HEIGHT = 220
+CUSTOM = "Personnalisée"
 
 
 class QuoteHistoryDialog(QDialog):
@@ -66,7 +76,31 @@ class QuoteHistoryDialog(QDialog):
             self._group.addButton(button)
             self._buttons[label] = button
             chips.addWidget(button)
+        custom = QPushButton(CUSTOM)
+        custom.setProperty("variant", "chip")
+        custom.setCheckable(True)
+        custom.setAccessibleName("Période : personnalisée")
+        custom.clicked.connect(lambda _=False: self.select_period(CUSTOM))
+        self._group.addButton(custom)
+        self._buttons[CUSTOM] = custom
+        chips.addWidget(custom)
         chips.addStretch(1)
+
+        first = self._points[0][0] if self._points else today
+        self._start = date_edit(first)
+        self._start.setAccessibleName("Date de début")
+        self._end = date_edit(today)
+        self._end.setAccessibleName("Date de fin")
+        self._start.dateChanged.connect(lambda _=None: self._range_changed())
+        self._end.dateChanged.connect(lambda _=None: self._range_changed())
+        self._range_box = QWidget()
+        range_row = QHBoxLayout(self._range_box)
+        range_row.setContentsMargins(0, 0, 0, 0)
+        range_row.setSpacing(8)
+        for text, edit in (("Du", self._start), ("au", self._end)):
+            range_row.addWidget(QLabel(text))
+            range_row.addWidget(edit)
+        range_row.addStretch(1)
 
         self._chart = PositionChart()
         self._chart.setAccessibleName("Historique des cotations")
@@ -91,6 +125,7 @@ class QuoteHistoryDialog(QDialog):
         layout.setSpacing(16)
         layout.addWidget(title)
         layout.addLayout(chips)
+        layout.addWidget(self._range_box)
         layout.addWidget(self._chart)
         layout.addLayout(stats)
         layout.addWidget(self._table)
@@ -122,11 +157,26 @@ class QuoteHistoryDialog(QDialog):
         return checked.text() if checked is not None else "Tout"
 
     def visible_points(self) -> list[Point]:
-        days = dict(PERIODS)[self.period()]
-        return in_period(self._points, self._today, days)
+        label = self.period()
+        if label == CUSTOM:
+            return in_range(self._points, to_date(self._start), to_date(self._end))
+        return in_period(self._points, self._today, dict(PERIODS)[label])
+
+    def set_range(self, start: date, end: date) -> None:
+        """Choisit la période personnalisée du `start` au `end` inclus."""
+        for edit, day in ((self._start, start), (self._end, end)):
+            edit.blockSignals(True)
+            edit.setDate(QDate(day.year, day.month, day.day))
+            edit.blockSignals(False)
+        self.select_period(CUSTOM)
+
+    def _range_changed(self) -> None:
+        if self.period() == CUSTOM:
+            self.select_period(CUSTOM)
 
     def select_period(self, label: str) -> None:
         self._buttons[label].setChecked(True)
+        self._range_box.setVisible(label == CUSTOM)
         points = self.visible_points()
         self._chart.set_data(points, None)
         stats = period_stats(points)

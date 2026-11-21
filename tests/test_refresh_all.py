@@ -28,6 +28,16 @@ def make_window(qtbot: QtBot, conn: Any) -> MainWindow:
     return window
 
 
+def add_assets(conn: Any, count: int = 2) -> None:
+    """Les valorisations référencent `assets(id)` : les actifs 1..count doivent exister."""
+    with conn:
+        for number in range(1, count + 1):
+            conn.execute(
+                "INSERT INTO assets (id, symbol, name, currency) VALUES (?, ?, ?, 'EUR')",
+                (number, f"SYM{number}", f"Actif {number}"),
+            )
+
+
 def stub(window: MainWindow, started: dict[str, bool]) -> list[tuple[str, bool]]:
     """Remplace les actualisations réseau des pages ; renvoie les appels reçus."""
     calls: list[tuple[str, bool]] = []
@@ -46,6 +56,7 @@ def stub(window: MainWindow, started: dict[str, bool]) -> list[tuple[str, bool]]
 
 
 def test_last_fetched_at_is_the_latest_recorded_call(conn: Any) -> None:
+    add_assets(conn)
     repository = ValuationRepository(conn)
     assert repository.last_fetched_at() is None
     early, late = datetime(2026, 11, 16, 9, 0), datetime(2026, 11, 17, 8, 30)
@@ -64,6 +75,7 @@ def test_portfolio_shows_last_refresh_date(qtbot: QtBot, conn: Any) -> None:
 
 def test_button_forces_every_page_and_spins_until_all_finish(qtbot: QtBot, conn: Any) -> None:
     window = make_window(qtbot, conn)
+    add_assets(conn)
     calls = stub(window, {"stocks": True, "bonds": True, "commodities": False})
     page = window.portfolio_page
 

@@ -465,7 +465,7 @@ def test_edit_dialog_is_prefilled_with_every_field_editable(qtbot: QtBot, page: 
     assert dialog.windowTitle() == "Modifier l'obligation"
     assert dialog._name.text() == "Obligation Corporate Alpha 4,50 % 2029"
     assert dialog._identifier.text() == CORPORATE
-    assert dialog._frequency.currentData() is CouponFrequency.SEMIANNUAL
+    assert CouponFrequency(dialog._frequency.currentData()) is CouponFrequency.SEMIANNUAL
     assert dialog._nominal.isEnabled() and dialog._currency.isEnabled()
     _, _, currency, details = dialog.form()
     assert currency == "EUR"

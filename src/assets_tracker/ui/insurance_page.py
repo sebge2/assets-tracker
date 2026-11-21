@@ -342,7 +342,9 @@ class ContractDialog(QDialog):
         self._on_kind()
 
     def _on_kind(self, *_: object) -> None:
-        self._ceiling_box.setVisible(self._kind.currentData() is ContractKind.PENSION_SAVINGS)
+        self._ceiling_box.setVisible(
+            ContractKind(self._kind.currentData()) is ContractKind.PENSION_SAVINGS
+        )
 
     def form(self) -> ContractDetails:
         kind = ContractKind(self._kind.currentData())

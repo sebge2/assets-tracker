@@ -8,7 +8,7 @@ from assets_tracker.domain.exposure import ExposureEntry, ExposureKind
 from assets_tracker.ui.exposure_dialog import ExposureDialog, ExposureEditor
 
 D = Decimal
-NBSP = " "
+NBSP = "\u00a0"
 
 
 def make_dialog(qtbot: QtBot) -> ExposureDialog:

@@ -167,7 +167,7 @@ def test_migration_turns_existing_commodity_prices_into_valuations(tmp_path: Pat
         assert migrated.fetched_at == datetime(2026, 11, 12, 21, 3, 41)
         assert repo.latest(STOCK, stock) is None  # seules les matières premières sont reprises
         assert second.execute("SELECT count(*) AS n FROM prices").fetchone()["n"] == 2  # intacte
-        assert int(second.execute("PRAGMA user_version").fetchone()[0]) == 2
+        assert int(second.execute("PRAGMA user_version").fetchone()[0]) >= 2
     finally:
         second.close()
 

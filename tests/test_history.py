@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import date
 from decimal import Decimal
 
+from PySide6.QtCore import QDate
 from pytestqt.qtbot import QtBot
 
 from assets_tracker.domain.history import daily_points, in_period, period_stats
@@ -74,3 +75,25 @@ def test_dialog_without_points_in_period_shows_message(qtbot: QtBot) -> None:
     assert dialog._stats["Variation"].text() == "—"
     dialog._buttons["Tout"].click()
     assert dialog._empty.isHidden()
+
+
+def test_in_range_is_inclusive_and_empty_when_reversed() -> None:
+    from assets_tracker.domain.history import in_range
+
+    got = in_range(POINTS, date(2026, 6, 1), date(2026, 10, 20))
+    assert [p[1] for p in got] == [D("100"), D("110")]
+    assert in_range(POINTS, date(2026, 10, 20), date(2026, 6, 1)) == []
+
+
+def test_dialog_custom_range(qtbot: QtBot) -> None:
+    dialog = make(qtbot, POINTS)
+    dialog.set_range(date(2026, 6, 1), date(2026, 10, 20))
+    assert dialog.period() == "Personnalisée"
+    assert dialog._table.rowCount() == 2
+    assert not dialog._range_box.isHidden()
+
+    dialog._end.setDate(QDate(2026, 11, 14))
+    assert dialog._table.rowCount() == 3
+
+    dialog._buttons["Tout"].click()
+    assert dialog._range_box.isHidden()
