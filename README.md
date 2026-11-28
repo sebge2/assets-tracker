@@ -27,3 +27,11 @@ export/sauvegarde chiffré avant de migrer vers un autre Mac ou d'effacer le
 Trousseau.
 Une base SQLite existante non chiffrée n'est jamais convertie automatiquement :
 sa migration doit être une opération explicite et sauvegardée.
+
+## Sauvegarde et restauration
+
+Les boutons « Sauvegarder… » et « Restaurer… » créent ou importent un fichier
+`.assetbackup` SQLCipher autonome. Il est chiffré avec une phrase de récupération
+d'au moins 12 caractères, qui n'est jamais enregistrée dans le Trousseau. Lors
+d'une restauration, la base est rechiffrée avec la clé locale du Mac d'arrivée ;
+l'application demande ensuite un redémarrage.

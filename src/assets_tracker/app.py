@@ -23,11 +23,12 @@ def main() -> int:
     app.setWindowIcon(application_icon())
     apply_theme(app)
     try:
-        database = connect(default_db_path())
+        database_path = default_db_path()
+        database = connect(database_path)
     except (DatabaseSecurityError, KeychainError) as error:
         QMessageBox.critical(None, "Portefeuille verrouillé", str(error))
         return 1
-    window = MainWindow(database)
+    window = MainWindow(database, database_path)
     window.show()
     exit_code = app.exec()
     database.close()

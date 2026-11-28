@@ -1,20 +1,26 @@
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any
 
 from PySide6.QtCore import QSize, Qt, QTimer
 from PySide6.QtWidgets import (
     QButtonGroup,
+    QFileDialog,
     QFrame,
     QHBoxLayout,
+    QInputDialog,
     QLabel,
+    QLineEdit,
     QMainWindow,
+    QMessageBox,
     QPushButton,
     QStackedWidget,
     QVBoxLayout,
     QWidget,
 )
 
+from assets_tracker.db.backup import BackupError, export_backup, replace_database, restore_backup
 from assets_tracker.db.bond_repository import BondRepository
 from assets_tracker.db.cash_repository import CashRepository
 from assets_tracker.db.commodity_repository import CommodityRepository
@@ -22,17 +28,18 @@ from assets_tracker.db.exposure_repository import ExposureRepository
 from assets_tracker.db.fund_repository import FundRepository
 from assets_tracker.db.fx_repository import FxRepository
 from assets_tracker.db.insurance_repository import InsuranceRepository
+from assets_tracker.db.keychain import KeychainError, database_key
 from assets_tracker.db.stock_repository import StockRepository
 from assets_tracker.db.term_note_repository import TermNoteRepository
 from assets_tracker.db.valuation_repository import ValuationRepository
 from assets_tracker.domain.models import InstrumentType
 from assets_tracker.market.exposure import fetch_exposure
 from assets_tracker.ui import icons, theme
+from assets_tracker.ui.analytics_page import AnalyticsPage
 from assets_tracker.ui.bonds_page import BondsPage
 from assets_tracker.ui.cash_page import CashPage
 from assets_tracker.ui.commodities_page import CommoditiesPage
 from assets_tracker.ui.funds_page import FundsPage
-from assets_tracker.ui.analytics_page import AnalyticsPage
 from assets_tracker.ui.insurance_page import InsurancePage
 from assets_tracker.ui.portfolio_page import PortfolioPage
 from assets_tracker.ui.projection_page import ProjectionPage
@@ -43,8 +50,10 @@ AUTO_REFRESH_MS = 4 * 60 * 60 * 1000  # actualisation automatique de tous les co
 
 
 class MainWindow(QMainWindow):
-    def __init__(self, database: Any) -> None:
+    def __init__(self, database: Any, database_path: Path | None = None) -> None:
         super().__init__()
+        self._database = database
+        self._database_path = database_path
         self.setWindowTitle("Assets Tracker")
         self.resize(1360, 820)
 
@@ -203,7 +212,94 @@ class MainWindow(QMainWindow):
             self._nav_buttons.append(button)
             layout.addWidget(button)
         layout.addStretch(1)
+        backup = QPushButton("Sauvegarder…")
+        backup.clicked.connect(self._export_backup)
+        restore = QPushButton("Restaurer…")
+        restore.clicked.connect(self._restore_backup)
+        layout.addWidget(backup)
+        layout.addWidget(restore)
         return sidebar
+
+    def _recovery_phrase(self, confirmation: bool = False) -> str | None:
+        phrase, accepted = QInputDialog.getText(
+            self,
+            "Phrase de récupération",
+            "Phrase de récupération (12 caractères minimum) :",
+            QLineEdit.EchoMode.Password,
+        )
+        if not accepted:
+            return None
+        if confirmation:
+            repeated, repeated_accepted = QInputDialog.getText(
+                self,
+                "Confirmer la phrase",
+                "Saisissez à nouveau la phrase de récupération :",
+                QLineEdit.EchoMode.Password,
+            )
+            if not repeated_accepted or repeated != phrase:
+                QMessageBox.warning(
+                    self, "Phrase différente", "Les deux phrases ne correspondent pas."
+                )
+                return None
+        return phrase
+
+    def _export_backup(self) -> None:
+        if self._database_path is None:
+            return
+        selected, _ = QFileDialog.getSaveFileName(
+            self,
+            "Sauvegarder le portefeuille",
+            "portfolio.assetbackup",
+            "Sauvegarde Assets Tracker (*.assetbackup)",
+        )
+        if not selected:
+            return
+        phrase = self._recovery_phrase(confirmation=True)
+        if phrase is None:
+            return
+        try:
+            export_backup(self._database, Path(selected), phrase)
+        except BackupError as error:
+            QMessageBox.warning(self, "Sauvegarde impossible", str(error))
+            return
+        QMessageBox.information(self, "Sauvegarde créée", "La sauvegarde chiffrée a été créée.")
+
+    def _restore_backup(self) -> None:
+        if self._database_path is None:
+            return
+        selected, _ = QFileDialog.getOpenFileName(
+            self,
+            "Restaurer un portefeuille",
+            "",
+            "Sauvegarde Assets Tracker (*.assetbackup)",
+        )
+        if not selected:
+            return
+        answer = QMessageBox.warning(
+            self,
+            "Restaurer la sauvegarde",
+            "La base locale actuelle sera remplacée. Continuer ?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if answer != QMessageBox.StandardButton.Yes:
+            return
+        phrase = self._recovery_phrase()
+        if phrase is None:
+            return
+        try:
+            restored = restore_backup(Path(selected), phrase, self._database_path, database_key())
+            self._database.close()
+            replace_database(restored, self._database_path)
+        except (BackupError, KeychainError) as error:
+            QMessageBox.warning(self, "Restauration impossible", str(error))
+            return
+        QMessageBox.information(
+            self,
+            "Restauration terminée",
+            "Redémarrez l'application pour ouvrir le portefeuille restauré.",
+        )
+        self.close()
 
     def _open_asset(self, instrument: InstrumentType, asset_id: int) -> None:
         """Ouvre la fiche d'un actif depuis l'écran Portefeuille (pour compléter ses données)."""
